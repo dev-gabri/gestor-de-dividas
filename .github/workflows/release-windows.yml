@@ -49,6 +49,11 @@ jobs:
       - name: Install dependencies (renderer)
         run: npm ci --prefix renderer
 
+      - name: Configure electron-builder publish metadata
+        shell: bash
+        run: |
+          node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); const [owner,repo]=process.env.GITHUB_REPOSITORY.split('/'); pkg.build=pkg.build||{}; pkg.build.publish=[{provider:'github',owner,repo,releaseType:'release'}]; fs.writeFileSync('package.json', JSON.stringify(pkg,null,2)+'\n');"
+
       - name: Build Windows installer (x64)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -61,6 +66,7 @@ jobs:
           path: |
             dist/Comercial-Fagundes-Setup.exe
             dist/Comercial-Fagundes-Setup.exe.blockmap
+            dist/latest.yml
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -69,6 +75,7 @@ jobs:
           files: |
             dist/Comercial-Fagundes-Setup.exe
             dist/Comercial-Fagundes-Setup.exe.blockmap
+            dist/latest.yml
           generate_release_notes: true
           fail_on_unmatched_files: true
           overwrite_files: true

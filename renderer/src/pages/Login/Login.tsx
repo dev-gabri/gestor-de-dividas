@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { login } from "../../lib/auth";
+import { getSupabaseConfigErrorMessage, hasSupabaseConfig } from "../../lib/supabase";
 import "./Login.css";
 
 export default function Login() {
@@ -9,8 +10,14 @@ export default function Login() {
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const supabaseConfigurado = hasSupabaseConfig();
 
   async function onSubmit() {
+    if (!supabaseConfigurado) {
+      setErro(getSupabaseConfigErrorMessage());
+      return;
+    }
+
     setErro(null);
     setLoading(true);
     try {
@@ -74,9 +81,10 @@ export default function Login() {
               />
             </label>
 
+            {!supabaseConfigurado ? <p className="login__error">{getSupabaseConfigErrorMessage()}</p> : null}
             {erro ? <p className="login__error">{erro}</p> : null}
 
-            <button className="login__submit" type="submit" disabled={loading}>
+            <button className="login__submit" type="submit" disabled={loading || !supabaseConfigurado}>
               {loading ? "Entrando..." : "Entrar no sistema"}
             </button>
           </form>

@@ -7,8 +7,10 @@
     "dev": "concurrently -k \"npm run dev:react\" \"npm run dev:electron\"",
     "dev:react": "npm --prefix renderer run dev",
     "dev:electron": "env -u ELECTRON_RUN_AS_NODE sh -c 'wait-on http://localhost:5173 && electron .'",
+    "lint": "npm --prefix renderer run lint",
     "build:renderer": "npm --prefix renderer run build",
     "build": "npm run build:renderer",
+    "check": "npm run lint && npm run build",
     "pack": "npm run build:renderer && electron-builder --dir",
     "dist": "npm run dist:win",
     "dist:mac": "xattr -cr . && npm run build:renderer && electron-builder --mac dmg --x64 --arm64",
@@ -68,5 +70,8 @@
         "AppImage"
       ]
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
   }
 }
