@@ -1,106 +1,43 @@
 # Comercial Fagundes - Gestor de Dívidas
 
-Aplicativo desktop em Electron + React para gestão de clientes, vendas, pagamentos e extrato.
+Aplicativo desktop para controle de fiado no mercado: clientes, vendas, pagamentos e extrato.
 
-## Stack
+Desenvolvido por **Gabriel Franca**.
+
+## Download do executável (Windows)
+Baixe sempre a versão mais recente:
+
+`https://github.com/dev-gabri/gestor-de-dividas/releases/latest/download/Comercial-Fagundes-Setup.exe`
+
+Passos:
+1. Clique no link acima.
+2. Baixe o arquivo `Comercial-Fagundes-Setup.exe`.
+3. Execute o instalador no Windows.
+
+## Atualização automática
+O sistema verifica novas versões automaticamente quando uma nova Release é publicada no GitHub.
+
+## Tecnologias
 - Electron
 - React + TypeScript + Vite
 - Supabase
 
-## Estrutura
-- `electron/` - processo principal do Electron
-- `renderer/` - interface React
-- `.github/workflows/` - automação de release Windows
-
-## Requisitos
-- Node.js 20+
-- npm 10+
-
-## Configuração local
-1. Instale dependências:
+## Desenvolvimento local
+1. Instalar dependências:
 ```bash
 npm ci
 npm ci --prefix renderer
 ```
-
-2. Configure variáveis do frontend:
+2. Criar ambiente:
 ```bash
 cp renderer/.env.example renderer/.env
 ```
-
-3. Edite `renderer/.env`:
+3. Preencher `renderer/.env`:
 ```env
 VITE_SUPABASE_URL=sua_url
 VITE_SUPABASE_ANON_KEY=sua_chave
 ```
-
-## Desenvolvimento
+4. Rodar app:
 ```bash
 npm run dev
-```
-
-## Qualidade e build
-```bash
-npm run check
-```
-
-## Gerar instalador Windows
-```bash
-npm run dist:win
-```
-
-Arquivo gerado:
-- `dist/Comercial-Fagundes-Setup.exe`
-
-## Conectar no GitHub (passo a passo)
-1. Crie um repositório vazio no GitHub (sem README inicial).
-2. No terminal da pasta do projeto, rode:
-```bash
-git config user.name "Seu Nome"
-git config user.email "seu-email@exemplo.com"
-git remote add origin https://github.com/SEU_USUARIO/SEU_REPO.git
-git add .
-git commit -m "chore: setup inicial"
-git push -u origin main
-```
-
-Se já existir commit local e você só quer conectar o remoto, use:
-```bash
-git remote add origin https://github.com/SEU_USUARIO/SEU_REPO.git
-git push -u origin main
-```
-
-## Publicar instalador automático via tag
-O workflow `.github/workflows/release-windows.yml` publica release automática.
-
-Configure os secrets no GitHub:
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-
-Depois publique uma tag:
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-Para publicar uma atualização nova (auto-update), aumente a versão no `package.json` antes da nova tag:
-```bash
-npm version patch
-git push origin main --follow-tags
-```
-
-Exemplo:
-- versão atual `1.0.0`
-- próxima versão `1.0.1`
-- app instalado detecta e baixa automaticamente
-
-Observação:
-- o auto-update é habilitado para builds Windows publicados via GitHub Release com os arquivos:
-  - `Comercial-Fagundes-Setup.exe`
-  - `Comercial-Fagundes-Setup.exe.blockmap`
-  - `latest.yml`
-
-Link fixo de download:
-```text
-https://github.com/SEU_USUARIO/SEU_REPO/releases/latest/download/Comercial-Fagundes-Setup.exe
 ```
