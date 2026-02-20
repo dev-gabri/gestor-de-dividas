@@ -6,6 +6,7 @@ export default function AppLayout() {
   const nav = useNavigate();
   const location = useLocation();
   const session = getSession();
+  const appVersion = __APP_VERSION__;
   const isAdmin = session?.role === "admin";
   const isClienteRoute = location.pathname.startsWith("/app/cliente/");
 
@@ -58,6 +59,7 @@ export default function AppLayout() {
           <button className="btn btn--ghost sidebar__logout" type="button" onClick={sair}>
             Sair do sistema
           </button>
+          <div className="sidebar__version">Versão {appVersion}</div>
         </div>
       </aside>
 
