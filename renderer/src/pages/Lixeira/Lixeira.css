@@ -41,6 +41,8 @@
   padding:12px 14px;
   border-bottom:1px solid var(--border);
   align-items:center;
+  content-visibility: auto;
+  contain-intrinsic-size: 56px;
 }
 .row:last-child{ border-bottom:none; }
 .row.head{ background:rgba(255,255,255,.04); font-weight:700; }

@@ -1,8 +1,10 @@
 import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { login } from "../../lib/auth";
-import { getSupabaseConfigErrorMessage, hasSupabaseConfig } from "../../lib/supabase";
 import "./Login.css";
+
+const supabaseConfigErrorMessage =
+  "Configuração ausente do Supabase. Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.";
+const supabaseConfigurado = Boolean((import.meta.env.VITE_SUPABASE_URL ?? "").trim() && (import.meta.env.VITE_SUPABASE_ANON_KEY ?? "").trim());
 
 export default function Login() {
   const nav = useNavigate();
@@ -10,17 +12,17 @@ export default function Login() {
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const supabaseConfigurado = hasSupabaseConfig();
 
   async function onSubmit() {
     if (!supabaseConfigurado) {
-      setErro(getSupabaseConfigErrorMessage());
+      setErro(supabaseConfigErrorMessage);
       return;
     }
 
     setErro(null);
     setLoading(true);
     try {
+      const { login } = await import("../../lib/auth");
       await login(usuario.trim(), senha.trim());
       nav("/app/dashboard");
     } catch (e: unknown) {
@@ -81,7 +83,7 @@ export default function Login() {
               />
             </label>
 
-            {!supabaseConfigurado ? <p className="login__error">{getSupabaseConfigErrorMessage()}</p> : null}
+            {!supabaseConfigurado ? <p className="login__error">{supabaseConfigErrorMessage}</p> : null}
             {erro ? <p className="login__error">{erro}</p> : null}
 
             <button className="login__submit" type="submit" disabled={loading || !supabaseConfigurado}>

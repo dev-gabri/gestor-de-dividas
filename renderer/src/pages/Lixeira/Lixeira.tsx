@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { listarClientesLixeira, restaurarCliente, excluirClientePermanente, type LixeiraClienteRow } from "../../lib/lixeira";
 import { formatBRLFromCentavos } from "../../lib/clients";
 import "./Lixeira.css";
@@ -6,6 +6,7 @@ import "./Lixeira.css";
 export default function Lixeira() {
   const [rows, setRows] = useState<LixeiraClienteRow[]>([]);
   const [q, setQ] = useState("");
+  const qDeferred = useDeferredValue(q);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -27,10 +28,10 @@ export default function Lixeira() {
   }, []);
 
   const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
+    const term = qDeferred.trim().toLowerCase();
     if (!term) return rows;
     return rows.filter((r) => (r.nome ?? "").toLowerCase().includes(term));
-  }, [rows, q]);
+  }, [rows, qDeferred]);
 
   async function onRestaurar(id: number, nome: string) {
     const ok = confirm(`Restaurar o cliente "${nome}"?`);

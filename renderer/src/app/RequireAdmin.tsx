@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 import { Navigate } from "react-router-dom";
-import { getSession } from "../lib/auth";
+import { getSession } from "../lib/session";
 
 export default function RequireAdmin({ children }: { children: JSX.Element }) {
   const s = getSession();

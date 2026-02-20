@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { cadastrarCliente, formatBRLFromCentavos, listarClientesAtivos, resumoDashboard } from "../../lib/clients";
 import "./Dashboard.css";
@@ -23,6 +23,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [ocultarValores, setOcultarValores] = useState(false);
   const [busca, setBusca] = useState("");
+  const buscaDeferred = useDeferredValue(busca);
   const [erro, setErro] = useState<string | null>(null);
   const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
   const [open, setOpen] = useState(false);
@@ -117,7 +118,7 @@ export default function Dashboard() {
   }
 
   const clientesFiltrados = useMemo(() => {
-    const termo = busca.trim().toLowerCase();
+    const termo = buscaDeferred.trim().toLowerCase();
     if (!termo) return clientes;
 
     return clientes.filter((c) => {
@@ -128,7 +129,7 @@ export default function Dashboard() {
       const rg = c.rg?.toLowerCase() ?? "";
       return nome.includes(termo) || telefone.includes(termo) || enderecoTerm.includes(termo) || cpf.includes(termo) || rg.includes(termo);
     });
-  }, [busca, clientes]);
+  }, [buscaDeferred, clientes]);
 
   const valorTotal = ocultarValores ? "R$ •••••" : formatBRLFromCentavos(total);
   const valorDevedores = ocultarValores ? "•••" : String(devedores);

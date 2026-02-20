@@ -7,6 +7,13 @@ const iconPath = path.join(__dirname, "..", "logo.png");
 const rendererDistIndex = path.join(__dirname, "..", "renderer", "dist", "index.html");
 const devServerUrl = process.env.ELECTRON_RENDERER_URL || "http://localhost:5173";
 const appId = "com.comercialfagundes.gestordedividas";
+let updateCheckInterval = null;
+let mainWindow = null;
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
 
 function getAppIcon() {
   const image = nativeImage.createFromPath(iconPath);
@@ -104,7 +111,11 @@ function setupAutoUpdater(win) {
     .catch((error) => console.error("Falha ao verificar atualizações:", error?.message ?? error));
 
   const thirtyMinutes = 30 * 60 * 1000;
-  setInterval(() => {
+  if (updateCheckInterval) {
+    clearInterval(updateCheckInterval);
+  }
+
+  updateCheckInterval = setInterval(() => {
     autoUpdater
       .checkForUpdates()
       .catch((error) => console.error("Falha ao verificar atualizações:", error?.message ?? error));
@@ -115,10 +126,25 @@ async function createWindow(appIcon) {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    minWidth: 1080,
+    minHeight: 720,
     icon: appIcon ?? iconPath,
+    show: false,
+    backgroundColor: "#eef4fb",
     autoHideMenuBar: true,
+    webPreferences: {
+      spellcheck: false,
+    },
   });
   attachWindowDiagnostics(win);
+  win.once("ready-to-show", () => {
+    win.show();
+  });
+  win.on("closed", () => {
+    if (mainWindow === win) {
+      mainWindow = null;
+    }
+  });
   if (process.platform !== "darwin") {
     win.setMenuBarVisibility(false);
     win.removeMenu();
@@ -148,10 +174,29 @@ app.whenReady().then(async () => {
   }
 
   const appIcon = applyAppIcon();
-  const win = await createWindow(appIcon);
-  if (win) {
-    setupAutoUpdater(win);
+  mainWindow = await createWindow(appIcon);
+  if (mainWindow) {
+    setupAutoUpdater(mainWindow);
   }
+});
+
+app.on("second-instance", () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+});
+
+app.on("before-quit", () => {
+  if (updateCheckInterval) {
+    clearInterval(updateCheckInterval);
+    updateCheckInterval = null;
+  }
+});
+
+app.on("activate", async () => {
+  if (BrowserWindow.getAllWindows().length > 0) return;
+  const appIcon = applyAppIcon();
+  mainWindow = await createWindow(appIcon);
 });
 
 app.on("window-all-closed", () => {

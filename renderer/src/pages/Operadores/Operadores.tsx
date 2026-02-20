@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
   criarOperador,
   listarOperadores,
@@ -19,6 +19,7 @@ export default function Operadores() {
   const [rows, setRows] = useState<OperadorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
+  const qDeferred = useDeferredValue(q);
   const [erro, setErro] = useState<string | null>(null);
 
   // form criar
@@ -49,14 +50,24 @@ export default function Operadores() {
   }, []);
 
   const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
+    const term = qDeferred.trim().toLowerCase();
     if (!term) return rows;
     return rows.filter((r) => r.usuario.toLowerCase().includes(term));
-  }, [rows, q]);
+  }, [rows, qDeferred]);
 
   const totalOperadores = rows.length;
-  const totalAdmins = rows.filter((r) => r.role === "admin").length;
-  const totalAtivos = rows.filter((r) => r.active).length;
+  const { totalAdmins, totalAtivos } = useMemo(
+    () =>
+      rows.reduce(
+        (acc, r) => {
+          if (r.role === "admin") acc.totalAdmins += 1;
+          if (r.active) acc.totalAtivos += 1;
+          return acc;
+        },
+        { totalAdmins: 0, totalAtivos: 0 },
+      ),
+    [rows],
+  );
   const totalInativos = totalOperadores - totalAtivos;
 
   async function onCriar() {

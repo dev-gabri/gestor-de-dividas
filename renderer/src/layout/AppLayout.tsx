@@ -1,12 +1,12 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { clearSession, getSession } from "../lib/auth";
+import { clearSession, getSession } from "../lib/session";
 import "./AppLayout.css";
 
 export default function AppLayout() {
   const nav = useNavigate();
   const location = useLocation();
   const session = getSession();
-  const appVersion = __APP_VERSION__;
+  const appVersion = "1.0.4";
   const isAdmin = session?.role === "admin";
   const isClienteRoute = location.pathname.startsWith("/app/cliente/");
 

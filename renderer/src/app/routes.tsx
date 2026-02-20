@@ -1,32 +1,38 @@
+import { lazy, Suspense, type ReactNode } from "react";
 import { createHashRouter } from "react-router-dom";
-import AppLayout from "../layout/AppLayout";
-import Login from "../pages/Login/Login";
-import Dashboard from "../pages/Dashboard/Dashboard";
-import Cliente from "../pages/Cliente/Cliente";
-import Lixeira from "../pages/Lixeira/Lixeira";
-import Operadores from "../pages/Operadores/Operadores";
 import RequireAuth from "./RequireAuth";
 import RequireAdmin from "./RequireAdmin";
 
+const AppLayout = lazy(() => import("../layout/AppLayout"));
+const Login = lazy(() => import("../pages/Login/Login"));
+const Dashboard = lazy(() => import("../pages/Dashboard/Dashboard"));
+const Cliente = lazy(() => import("../pages/Cliente/Cliente"));
+const Lixeira = lazy(() => import("../pages/Lixeira/Lixeira"));
+const Operadores = lazy(() => import("../pages/Operadores/Operadores"));
+
+function withRouteSuspense(element: ReactNode) {
+  return <Suspense fallback={<div className="route-loading">Carregando...</div>}>{element}</Suspense>;
+}
+
 export const router = createHashRouter([
-  { path: "/", element: <Login /> },
+  { path: "/", element: withRouteSuspense(<Login />) },
   {
     path: "/app",
-    element: (
+    element: withRouteSuspense(
       <RequireAuth>
         <AppLayout />
-      </RequireAuth>
+      </RequireAuth>,
     ),
     children: [
-      { path: "dashboard", element: <Dashboard /> },
-      { path: "cliente/:id", element: <Cliente /> },
-      { path: "lixeira", element: <Lixeira /> },
+      { path: "dashboard", element: withRouteSuspense(<Dashboard />) },
+      { path: "cliente/:id", element: withRouteSuspense(<Cliente />) },
+      { path: "lixeira", element: withRouteSuspense(<Lixeira />) },
       {
         path: "operadores",
-        element: (
+        element: withRouteSuspense(
           <RequireAdmin>
             <Operadores />
-          </RequireAdmin>
+          </RequireAdmin>,
         ),
       },
     ],

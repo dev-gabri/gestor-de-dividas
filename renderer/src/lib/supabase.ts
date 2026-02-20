@@ -20,11 +20,3 @@ function createMissingConfigProxy() {
 export const supabase: SupabaseClient = supabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey)
   : createMissingConfigProxy();
-
-export function hasSupabaseConfig() {
-  return supabaseConfigured;
-}
-
-export function getSupabaseConfigErrorMessage() {
-  return supabaseConfigErrorMessage;
-}
