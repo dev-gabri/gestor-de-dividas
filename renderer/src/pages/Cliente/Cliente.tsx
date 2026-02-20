@@ -1,0 +1,804 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { getSession, validarSenhaOperador } from "../../lib/auth";
+import { atualizarCliente, formatBRLFromCentavos } from "../../lib/clients";
+import {
+  getClienteById,
+  getExtratoCliente,
+  getOperadoresPorIds,
+  lancarVenda,
+  mandarParaLixeira,
+  receberPagamento,
+} from "../../lib/movimentos.ts";
+import "./Cliente.css";
+
+type ExtratoRow = {
+  id: number;
+  created_at: string;
+  type: "SALE" | "PAYMENT";
+  valor_assinado_centavos: number;
+  saldo_antes_centavos: number;
+  saldo_depois_centavos: number;
+  obs: string | null;
+  operador_id: number | null;
+  operador_nome?: string | null;
+  operador_usuario?: string | null;
+  operador_login?: string | null;
+};
+
+type ClienteData = {
+  id: number;
+  nome: string;
+  telefone?: string | null;
+  endereco?: string | null;
+  cpf?: string | null;
+  rg?: string | null;
+  saldo_centavos: number | null;
+};
+
+type PendingOperation = {
+  kind: "SALE" | "PAYMENT" | "SETTLE";
+  descricao: string;
+  valorCentavos: number;
+  obs: string;
+};
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+export default function Cliente() {
+  const nav = useNavigate();
+  const { id } = useParams();
+  const clienteId = Number(id);
+  const session = getSession();
+
+  const [cliente, setCliente] = useState<ClienteData | null>(null);
+  const [extrato, setExtrato] = useState<ExtratoRow[]>([]);
+  const [operadoresPorId, setOperadoresPorId] = useState<Record<number, string>>({});
+  const [loading, setLoading] = useState(true);
+
+  const [valor, setValor] = useState("");
+  const [obs, setObs] = useState("");
+
+  const [pendingOp, setPendingOp] = useState<PendingOperation | null>(null);
+  const [senhaOperador, setSenhaOperador] = useState("");
+  const [confirmandoOp, setConfirmandoOp] = useState(false);
+  const [pendingLixeira, setPendingLixeira] = useState(false);
+  const [motivoLixeira, setMotivoLixeira] = useState("");
+  const [confirmandoLixeira, setConfirmandoLixeira] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [eNome, setENome] = useState("");
+  const [eTel, setETel] = useState("");
+  const [eEnd, setEEnd] = useState("");
+  const [eCpf, setECpf] = useState("");
+  const [eRg, setERg] = useState("");
+
+  const valorCentavos = useMemo(() => {
+    const only = valor.replace(/[^\d]/g, "");
+    return only ? Number(only) : 0;
+  }, [valor]);
+
+  const load = useCallback(async () => {
+    if (!Number.isFinite(clienteId)) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const [c, e] = await Promise.all([getClienteById(clienteId), getExtratoCliente(clienteId)]);
+      setCliente(c as ClienteData);
+
+      const rows = e as ExtratoRow[];
+      setExtrato(rows);
+
+      const ids = Array.from(new Set(rows.map((r) => r.operador_id).filter((v): v is number => typeof v === "number")));
+      if (ids.length > 0) {
+        try {
+          const mapa = await getOperadoresPorIds(ids);
+          setOperadoresPorId(mapa);
+        } catch {
+          setOperadoresPorId({});
+        }
+      } else {
+        setOperadoresPorId({});
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [clienteId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const onVenda = useCallback(() => {
+    if (!session) return;
+    if (valorCentavos <= 0) return alert("Informe um valor válido.");
+
+    setSenhaOperador("");
+    setPendingOp({
+      kind: "SALE",
+      descricao: `Venda para ${cliente?.nome ?? "cliente"} no valor de ${formatBRLFromCentavos(valorCentavos)}`,
+      valorCentavos,
+      obs,
+    });
+  }, [session, valorCentavos, cliente, obs]);
+
+  const onPagamento = useCallback(() => {
+    if (!session) return;
+    if (valorCentavos <= 0) return alert("Informe um valor válido.");
+
+    setSenhaOperador("");
+    setPendingOp({
+      kind: "PAYMENT",
+      descricao: `Pagamento para ${cliente?.nome ?? "cliente"} no valor de ${formatBRLFromCentavos(valorCentavos)}`,
+      valorCentavos,
+      obs,
+    });
+  }, [session, valorCentavos, cliente, obs]);
+
+  const onQuitarTudo = useCallback(() => {
+    if (!session) return;
+    const saldoAtual = cliente?.saldo_centavos ?? 0;
+    if (saldoAtual <= 0) return alert("Este cliente não possui saldo pendente.");
+
+    setSenhaOperador("");
+    setPendingOp({
+      kind: "SETTLE",
+      descricao: `Quitação total de ${cliente?.nome ?? "cliente"} no valor de ${formatBRLFromCentavos(saldoAtual)}`,
+      valorCentavos: saldoAtual,
+      obs: "Quitação total",
+    });
+  }, [session, cliente]);
+
+  const onMandarParaLixeira = useCallback(async () => {
+    if (!session) {
+      alert("Sessão expirada. Faça login novamente.");
+      nav("/", { replace: true });
+      return;
+    }
+
+    setSenhaOperador("");
+    setMotivoLixeira("");
+    setPendingLixeira(true);
+  }, [session, nav]);
+
+  function abrirEditar() {
+    if (!cliente) return;
+    setENome(cliente.nome ?? "");
+    setETel(cliente.telefone ?? "");
+    setEEnd(cliente.endereco ?? "");
+    setECpf(cliente.cpf ?? "");
+    setERg(cliente.rg ?? "");
+    setEditOpen(true);
+  }
+
+  const fecharEditar = useCallback(() => {
+    if (editSaving) return;
+    setEditOpen(false);
+  }, [editSaving]);
+
+  const cancelarOperacao = useCallback(() => {
+    if (confirmandoOp) return;
+    setPendingOp(null);
+    setSenhaOperador("");
+  }, [confirmandoOp]);
+
+  const cancelarLixeira = useCallback(() => {
+    if (confirmandoLixeira) return;
+    setPendingLixeira(false);
+    setMotivoLixeira("");
+    setSenhaOperador("");
+  }, [confirmandoLixeira]);
+
+  const confirmarOperacao = useCallback(async () => {
+    if (!session || !pendingOp) return;
+    if (!senhaOperador.trim()) {
+      alert("Digite a senha do operador.");
+      return;
+    }
+
+    setConfirmandoOp(true);
+    try {
+      const senhaValida = await validarSenhaOperador(session.usuario, senhaOperador.trim(), session.id);
+      if (!senhaValida) {
+        alert("Senha do operador inválida.");
+        return;
+      }
+
+      if (pendingOp.kind === "SALE") {
+        await lancarVenda(clienteId, pendingOp.valorCentavos, pendingOp.obs, session.id);
+      } else {
+        await receberPagamento(clienteId, pendingOp.valorCentavos, pendingOp.obs, session.id);
+      }
+
+      setPendingOp(null);
+      setSenhaOperador("");
+      setValor("");
+      setObs("");
+      await load();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Erro ao confirmar operação.");
+    } finally {
+      setConfirmandoOp(false);
+    }
+  }, [session, pendingOp, senhaOperador, clienteId, load]);
+
+  const confirmarLixeira = useCallback(async () => {
+    if (!session) return;
+    if (!senhaOperador.trim()) {
+      alert("Digite a senha do operador.");
+      return;
+    }
+
+    setConfirmandoLixeira(true);
+    try {
+      const senhaValida = await validarSenhaOperador(session.usuario, senhaOperador.trim(), session.id);
+      if (!senhaValida) {
+        alert("Senha do operador inválida.");
+        return;
+      }
+
+      await mandarParaLixeira(clienteId, session.id, motivoLixeira.trim() || undefined);
+      setPendingLixeira(false);
+      setMotivoLixeira("");
+      setSenhaOperador("");
+      nav("/app/dashboard", { replace: true });
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Erro ao mandar cliente para a lixeira.");
+    } finally {
+      setConfirmandoLixeira(false);
+    }
+  }, [session, senhaOperador, clienteId, motivoLixeira, nav]);
+
+  const imprimirExtrato = useCallback(
+    (mode: "pdf" | "bematech") => {
+      if (!cliente) return;
+
+      try {
+        const isBematech = mode === "bematech";
+        const documentoCliente = cliente.cpf || cliente.rg || "-";
+        const saldoAtualCliente = formatBRLFromCentavos(cliente.saldo_centavos ?? 0);
+
+        const linhas = extrato
+          .map((r) => {
+            const operador =
+              r.operador_nome ??
+              r.operador_usuario ??
+              r.operador_login ??
+              (r.operador_id ? operadoresPorId[r.operador_id] : undefined) ??
+              "Não informado";
+
+            if (isBematech) {
+              return `
+                <div class="ticket__item">
+                  <div class="ticket__line">
+                    <strong>${r.type === "SALE" ? "VENDA" : "PAGTO"}</strong>
+                    <span>${escapeHtml(formatBRLFromCentavos(r.valor_assinado_centavos ?? 0))}</span>
+                  </div>
+                  <div class="ticket__muted">${escapeHtml(new Date(r.created_at).toLocaleString("pt-BR"))}</div>
+                  <div class="ticket__muted">Saldo depois: ${escapeHtml(formatBRLFromCentavos(r.saldo_depois_centavos ?? 0))}</div>
+                  <div class="ticket__muted">Operador: ${escapeHtml(operador)}</div>
+                  <div class="ticket__muted">Obs: ${escapeHtml(r.obs ?? "-")}</div>
+                </div>
+              `;
+            }
+
+            return `
+              <tr>
+                <td>${escapeHtml(new Date(r.created_at).toLocaleString("pt-BR"))}</td>
+                <td>${r.type === "SALE" ? "Venda" : "Pagamento"}</td>
+                <td>${escapeHtml(formatBRLFromCentavos(r.valor_assinado_centavos ?? 0))}</td>
+                <td>${escapeHtml(formatBRLFromCentavos(r.saldo_depois_centavos ?? 0))}</td>
+                <td>${escapeHtml(operador)}</td>
+                <td>${escapeHtml(r.obs ?? "-")}</td>
+              </tr>
+            `;
+          })
+          .join("");
+
+        const conteudo = extrato.length
+          ? linhas
+          : isBematech
+            ? `<div class="ticket__empty">Sem movimentações no extrato.</div>`
+            : `<tr><td class="report__empty" colspan="6">Sem movimentações no extrato.</td></tr>`;
+
+        const html = `
+          <!doctype html>
+          <html lang="pt-BR">
+            <head>
+              <meta charset="utf-8" />
+              <title>Extrato - ${escapeHtml(cliente.nome)}</title>
+              <style>
+                * { box-sizing: border-box; }
+                body {
+                  margin: 0;
+                  color: #0f172a;
+                  font-family: ${isBematech ? '"Courier New", monospace' : '"Segoe UI", Arial, sans-serif'};
+                  font-size: ${isBematech ? "11px" : "13px"};
+                  line-height: 1.4;
+                }
+                @page {
+                  size: ${isBematech ? "80mm auto" : "A4"};
+                  margin: ${isBematech ? "4mm" : "12mm"};
+                }
+                .wrap {
+                  width: ${isBematech ? "72mm" : "100%"};
+                  margin: 0 auto;
+                }
+                .report__head {
+                  border-bottom: 1px dashed #94a3b8;
+                  padding-bottom: 8px;
+                  margin-bottom: 8px;
+                }
+                .report__title {
+                  margin: 0;
+                  font-size: ${isBematech ? "14px" : "20px"};
+                }
+                .report__meta {
+                  margin-top: 4px;
+                  color: #334155;
+                  display: grid;
+                  gap: 2px;
+                }
+                .report__hint {
+                  margin: 8px 0;
+                  color: #475569;
+                  font-size: ${isBematech ? "10px" : "12px"};
+                }
+                .report__table {
+                  width: 100%;
+                  border-collapse: collapse;
+                }
+                .report__table th,
+                .report__table td {
+                  border: 1px solid #cbd5e1;
+                  padding: 6px;
+                  text-align: left;
+                  vertical-align: top;
+                }
+                .report__table th {
+                  background: #eff6ff;
+                }
+                .report__empty {
+                  text-align: center;
+                  color: #64748b;
+                  padding: 16px;
+                }
+                .ticket__item {
+                  border-bottom: 1px dashed #94a3b8;
+                  padding: 8px 0;
+                }
+                .ticket__line {
+                  display: flex;
+                  justify-content: space-between;
+                  gap: 8px;
+                  font-weight: 700;
+                }
+                .ticket__muted {
+                  color: #334155;
+                }
+                .ticket__empty {
+                  color: #64748b;
+                  padding: 8px 0;
+                }
+              </style>
+            </head>
+            <body>
+              <div class="wrap">
+                <header class="report__head">
+                  <h1 class="report__title">${isBematech ? "Extrato - Bematech" : "Extrato do Cliente"}</h1>
+                  <div class="report__meta">
+                    <div><strong>Cliente:</strong> ${escapeHtml(cliente.nome)}</div>
+                    <div><strong>Documento:</strong> ${escapeHtml(documentoCliente)}</div>
+                    <div><strong>Telefone:</strong> ${escapeHtml(cliente.telefone ?? "-")}</div>
+                    <div><strong>Saldo atual:</strong> ${escapeHtml(saldoAtualCliente)}</div>
+                    <div><strong>Gerado em:</strong> ${escapeHtml(new Date().toLocaleString("pt-BR"))}</div>
+                  </div>
+                  <p class="report__hint">${
+                    isBematech
+                      ? "Selecione a impressora Bematech no diálogo para emitir no cupom."
+                      : "Use o diálogo de impressão para salvar em PDF."
+                  }</p>
+                </header>
+                ${
+                  isBematech
+                    ? `<section>${conteudo}</section>`
+                    : `
+                      <table class="report__table">
+                        <thead>
+                          <tr>
+                            <th>Data</th>
+                            <th>Tipo</th>
+                            <th>Movimento</th>
+                            <th>Saldo depois</th>
+                            <th>Operador</th>
+                            <th>Obs</th>
+                          </tr>
+                        </thead>
+                        <tbody>${conteudo}</tbody>
+                      </table>
+                    `
+                }
+              </div>
+              <script>
+                window.addEventListener("load", () => {
+                  setTimeout(() => window.print(), 120);
+                });
+                window.addEventListener("afterprint", () => window.close());
+              </script>
+            </body>
+          </html>
+        `;
+
+        const popup = window.open("", "_blank", "width=940,height=700");
+        if (!popup) {
+          alert("Não foi possível abrir a janela de impressão. Verifique bloqueio de pop-up.");
+          return;
+        }
+
+        popup.document.open();
+        popup.document.write(html);
+        popup.document.close();
+      } catch (e: unknown) {
+        alert(e instanceof Error ? e.message : "Falha ao preparar impressão do extrato.");
+      }
+    },
+    [cliente, extrato, operadoresPorId],
+  );
+
+  async function salvarEdicao() {
+    if (!session) return;
+    if (!eNome.trim()) {
+      alert("Nome é obrigatório.");
+      return;
+    }
+
+    setEditSaving(true);
+    try {
+      await atualizarCliente({
+        id: clienteId,
+        nome: eNome.trim(),
+        telefone: eTel.trim() || undefined,
+        endereco: eEnd.trim() || undefined,
+        cpf: eCpf.trim() || undefined,
+        rg: eRg.trim() || undefined,
+      });
+      fecharEditar();
+      await load();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Erro ao atualizar");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    const onGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === "Enter") {
+        e.preventDefault();
+        onPagamento();
+      }
+
+      if (e.ctrlKey && e.key.toLowerCase() === "q") {
+        e.preventDefault();
+        onQuitarTudo();
+      }
+    };
+
+    window.addEventListener("keydown", onGlobalKeyDown);
+    return () => window.removeEventListener("keydown", onGlobalKeyDown);
+  }, [onPagamento, onQuitarTudo]);
+
+  if (loading) return <p className="muted">Carregando...</p>;
+  if (!cliente) return <p className="muted">Cliente não encontrado.</p>;
+
+  const saldoAtual = cliente.saldo_centavos ?? 0;
+  const qtdVendas = extrato.filter((r) => r.type === "SALE").length;
+  const qtdPagamentos = extrato.filter((r) => r.type === "PAYMENT").length;
+  const documento = cliente.cpf || cliente.rg;
+
+  return (
+    <div className="cli">
+      <header className="cli__hero">
+        <div className="cli__heroTop">
+          <div className="cli__heroActions">
+            <button className="cli__heroBtn cli__heroBtn--edit" type="button" onClick={abrirEditar}>
+              Editar cliente
+            </button>
+            <button className="cli__heroBtn cli__heroBtn--danger" type="button" onClick={() => void onMandarParaLixeira()}>
+              Mandar pra lixeira
+            </button>
+            <button className="cli__heroBtn cli__heroBtn--refresh" type="button" onClick={() => void load()}>
+              Atualizar
+            </button>
+          </div>
+        </div>
+
+        <div className="cli__heroBody">
+          <div>
+            <h2 className="cli__title">{cliente.nome}</h2>
+            <p className="cli__subtitle">Registro de vendas, pagamentos e histórico detalhado.</p>
+            <div className="cli__meta">
+              <span className="cli__metaChip">Telefone: {cliente.telefone ?? "-"}</span>
+              <span className="cli__metaChip">Documento: {documento ?? "-"}</span>
+              <span className="cli__metaChip">Endereço: {cliente.endereco ?? "-"}</span>
+            </div>
+          </div>
+          <div className="cli__stats">
+            <div className="cli__stat">
+              <span>Saldo atual</span>
+              <strong className={saldoAtual > 0 ? "cli__saldoAtual cli__saldoAtual--sale" : "cli__saldoAtual cli__saldoAtual--payment"}>
+                {formatBRLFromCentavos(saldoAtual)}
+              </strong>
+            </div>
+            <div className="cli__stat">
+              <span>Vendas</span>
+              <strong className="mov mov--sale">{qtdVendas}</strong>
+            </div>
+            <div className="cli__stat">
+              <span>Pagamentos</span>
+              <strong className="mov mov--payment">{qtdPagamentos}</strong>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section className="cli__layout">
+        <div className="card cli__card cli__card--form">
+          <h3 className="card__title">Lançamentos</h3>
+          <p className="cli__shortcuts">
+            Atalhos: Enter no campo Valor = Venda | Enter no campo Observação = Pagamento | Ctrl+Enter = Pagamento (em qualquer campo) |
+            Ctrl+Q = Quitar tudo
+          </p>
+
+          <div className="grid">
+            <label className="field">
+              <span>Valor (centavos)</span>
+              <input
+                className="input"
+                value={valor}
+                onChange={(e) => setValor(e.target.value)}
+                placeholder="Ex: 2500 (R$ 25,00)"
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  if (e.ctrlKey) {
+                    onPagamento();
+                  } else {
+                    onVenda();
+                  }
+                }}
+              />
+            </label>
+
+            <label className="field">
+              <span>Obs</span>
+              <input
+                className="input"
+                value={obs}
+                onChange={(e) => setObs(e.target.value)}
+                placeholder="Observação da operação (opcional)"
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  onPagamento();
+                }}
+              />
+            </label>
+          </div>
+
+          <div className="actions">
+            <button className="btn cli__btn-venda" onClick={onVenda} type="button">
+              + Venda
+            </button>
+            <button className="btn cli__btn-pagamento" onClick={onPagamento} type="button">
+              + Pagamento
+            </button>
+            <button className="btn cli__btn-quitar" onClick={onQuitarTudo} type="button">
+              Quitar Tudo
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="card cli__card cli__card--extrato">
+        <div className="cli__extratoHead">
+          <h3 className="card__title">Extrato</h3>
+          <div className="cli__extratoActions">
+            <button className="btn cli__btn-print-pdf" type="button" onClick={() => imprimirExtrato("pdf")}>
+              Exportar PDF
+            </button>
+            <button className="btn cli__btn-print-bematech" type="button" onClick={() => imprimirExtrato("bematech")}>
+              Imprimir Bematech
+            </button>
+          </div>
+        </div>
+        <div className="cli__timeline">
+          {extrato.length === 0 ? <p className="muted">Ainda não há movimentações.</p> : null}
+          {extrato.map((r) => (
+            <article className={r.type === "SALE" ? "cli__entry cli__entry--sale" : "cli__entry cli__entry--payment"} key={r.id}>
+              <div className="cli__entryTop">
+                <span className={r.type === "SALE" ? "tipo tipo--sale" : "tipo tipo--payment"}>
+                  {r.type === "SALE" ? "Venda" : "Pagamento"}
+                </span>
+                <span className="muted">{new Date(r.created_at).toLocaleString("pt-BR")}</span>
+              </div>
+
+              <div className="cli__entryGrid">
+                <div className="cli__entryItem">
+                  <span className="muted">Saldo antes</span>
+                  <strong>{formatBRLFromCentavos(r.saldo_antes_centavos ?? 0)}</strong>
+                </div>
+                <div className="cli__entryItem">
+                  <span className="muted">Movimento</span>
+                  <strong className={r.type === "SALE" ? "mov mov--sale" : "mov mov--payment"}>
+                    {formatBRLFromCentavos(r.valor_assinado_centavos ?? 0)}
+                  </strong>
+                </div>
+                <div className="cli__entryItem">
+                  <span className="muted">Saldo depois</span>
+                  <strong>{formatBRLFromCentavos(r.saldo_depois_centavos ?? 0)}</strong>
+                </div>
+              </div>
+
+              <div className="cli__entryFoot">
+                <span className="muted">Obs: {r.obs ?? "-"}</span>
+                <span className="operador">
+                  Operador:{" "}
+                  {r.operador_nome ??
+                    r.operador_usuario ??
+                    r.operador_login ??
+                    (r.operador_id ? operadoresPorId[r.operador_id] : undefined) ??
+                    "Não informado"}
+                </span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {pendingOp ? (
+        <div className="confirm__backdrop">
+          <div className="confirm__card">
+            <h4 className="confirm__title">Confirmação de Operação</h4>
+            <p className="confirm__text">Você está prestes a registrar a seguinte operação:</p>
+            <p className="confirm__desc">{pendingOp.descricao}</p>
+
+            <label className="field">
+              <span>Senha do operador</span>
+              <input
+                className="input"
+                type="password"
+                value={senhaOperador}
+                onChange={(e) => setSenhaOperador(e.target.value)}
+                placeholder="Digite sua senha"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void confirmarOperacao();
+                }}
+              />
+            </label>
+
+            <div className="confirm__actions">
+              <button className="btn" type="button" onClick={cancelarOperacao} disabled={confirmandoOp}>
+                Não
+              </button>
+              <button className="btn btn--primary" type="button" onClick={() => void confirmarOperacao()} disabled={confirmandoOp}>
+                {confirmandoOp ? "Confirmando..." : "Sim"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingLixeira ? (
+        <div className="confirm__backdrop">
+          <div className="confirm__card">
+            <h4 className="confirm__title">Mandar para lixeira</h4>
+            <p className="confirm__text">Você está prestes a registrar a seguinte operação:</p>
+            <p className="confirm__desc">Enviar o cliente "{cliente.nome}" para a lixeira.</p>
+
+            <label className="field">
+              <span>Motivo (opcional)</span>
+              <input
+                className="input"
+                value={motivoLixeira}
+                onChange={(e) => setMotivoLixeira(e.target.value)}
+                placeholder="Ex: cliente não compra mais"
+              />
+            </label>
+
+            <label className="field">
+              <span>Senha do operador</span>
+              <input
+                className="input"
+                type="password"
+                value={senhaOperador}
+                onChange={(e) => setSenhaOperador(e.target.value)}
+                placeholder="Digite sua senha"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void confirmarLixeira();
+                }}
+              />
+            </label>
+
+            <div className="confirm__actions">
+              <button className="btn" type="button" onClick={cancelarLixeira} disabled={confirmandoLixeira}>
+                Não
+              </button>
+              <button className="btn btn--primary" type="button" onClick={() => void confirmarLixeira()} disabled={confirmandoLixeira}>
+                {confirmandoLixeira ? "Confirmando..." : "Sim"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editOpen ? (
+        <div className="modal__backdrop" onClick={fecharEditar}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal__head">
+              <div>
+                <h3 className="modal__title">Editar cliente</h3>
+                <p className="modal__subtitle">Atualize os dados cadastrais e mantenha o histórico organizado.</p>
+              </div>
+              <button className="modal__close" type="button" onClick={fecharEditar} disabled={editSaving}>
+                X
+              </button>
+            </div>
+
+            <div className="grid2">
+              <label className="field">
+                <span>Nome *</span>
+                <input className="input" value={eNome} onChange={(e) => setENome(e.target.value)} placeholder="Nome completo" />
+              </label>
+
+              <label className="field">
+                <span>Telefone</span>
+                <input className="input" value={eTel} onChange={(e) => setETel(e.target.value)} placeholder="(62) 99999-9999" />
+              </label>
+
+              <label className="field">
+                <span>Endereço</span>
+                <input className="input" value={eEnd} onChange={(e) => setEEnd(e.target.value)} placeholder="Rua, número e bairro" />
+              </label>
+
+              <label className="field">
+                <span>CPF</span>
+                <input className="input" value={eCpf} onChange={(e) => setECpf(e.target.value)} placeholder="000.000.000-00" />
+              </label>
+
+              <label className="field">
+                <span>RG</span>
+                <input className="input" value={eRg} onChange={(e) => setERg(e.target.value)} placeholder="Número do RG" />
+              </label>
+            </div>
+
+            <div className="modal__actions">
+              <button className="btn" type="button" onClick={fecharEditar} disabled={editSaving}>
+                Cancelar
+              </button>
+              <button className="btn btn--primary" type="button" onClick={() => void salvarEdicao()} disabled={editSaving}>
+                {editSaving ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
