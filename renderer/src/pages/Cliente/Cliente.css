@@ -464,6 +464,13 @@
   font-weight: 700;
 }
 
+.confirm__error {
+  margin: 8px 0 0;
+  color: #b42318;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .confirm__actions,
 .cli .modal__actions {
   display: flex;

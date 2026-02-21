@@ -108,8 +108,8 @@ export default function Dashboard() {
       });
 
       setOpen(false);
-      await load(true);
       nav(`/app/cliente/${newId}`);
+      void load(false);
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : "Erro ao cadastrar cliente");
     } finally {

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { validarSenhaOperador } from "../../lib/auth";
 import { atualizarCliente, formatBRLFromCentavos } from "../../lib/clients";
@@ -68,6 +68,24 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#39;");
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs = 15000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error("A operação demorou para responder. Tente novamente."));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
 const ExtratoTimeline = memo(function ExtratoTimeline({ rows }: { rows: ExtratoViewRow[] }) {
   if (rows.length === 0) return <p className="muted">Ainda não há movimentações.</p>;
 
@@ -115,6 +133,7 @@ export default function Cliente() {
   const [extrato, setExtrato] = useState<ExtratoRow[]>([]);
   const [operadoresPorId, setOperadoresPorId] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
+  const [erroCarga, setErroCarga] = useState<string | null>(null);
 
   const [valor, setValor] = useState("");
   const [obs, setObs] = useState("");
@@ -122,9 +141,11 @@ export default function Cliente() {
   const [pendingOp, setPendingOp] = useState<PendingOperation | null>(null);
   const [senhaOperador, setSenhaOperador] = useState("");
   const [confirmandoOp, setConfirmandoOp] = useState(false);
+  const [erroConfirmacaoOp, setErroConfirmacaoOp] = useState<string | null>(null);
   const [pendingLixeira, setPendingLixeira] = useState(false);
   const [motivoLixeira, setMotivoLixeira] = useState("");
   const [confirmandoLixeira, setConfirmandoLixeira] = useState(false);
+  const [erroConfirmacaoLixeira, setErroConfirmacaoLixeira] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [eNome, setENome] = useState("");
@@ -132,6 +153,7 @@ export default function Cliente() {
   const [eEnd, setEEnd] = useState("");
   const [eCpf, setECpf] = useState("");
   const [eRg, setERg] = useState("");
+  const senhaLixeiraInputRef = useRef<HTMLInputElement | null>(null);
 
   const valorCentavos = useMemo(() => {
     const only = valor.replace(/[^\d]/g, "");
@@ -168,11 +190,16 @@ export default function Cliente() {
 
   const load = useCallback(async () => {
     if (!Number.isFinite(clienteId)) {
+      setErroCarga("Cliente inválido.");
+      setCliente(null);
+      setExtrato([]);
+      setOperadoresPorId({});
       setLoading(false);
       return;
     }
 
     setLoading(true);
+    setErroCarga(null);
     try {
       const [c, e] = await Promise.all([getClienteById(clienteId), getExtratoCliente(clienteId)]);
       setCliente(c as ClienteData);
@@ -191,6 +218,11 @@ export default function Cliente() {
       } else {
         setOperadoresPorId({});
       }
+    } catch (e: unknown) {
+      setErroCarga(e instanceof Error ? e.message : "Erro ao carregar cliente.");
+      setCliente(null);
+      setExtrato([]);
+      setOperadoresPorId({});
     } finally {
       setLoading(false);
     }
@@ -204,7 +236,7 @@ export default function Cliente() {
     if (!session) return;
     if (valorCentavos <= 0) return alert("Informe um valor válido.");
 
-    setSenhaOperador("");
+    setErroConfirmacaoOp(null);
     setPendingOp({
       kind: "SALE",
       descricao: `Venda para ${cliente?.nome ?? "cliente"} no valor de ${formatBRLFromCentavos(valorCentavos)}`,
@@ -217,7 +249,7 @@ export default function Cliente() {
     if (!session) return;
     if (valorCentavos <= 0) return alert("Informe um valor válido.");
 
-    setSenhaOperador("");
+    setErroConfirmacaoOp(null);
     setPendingOp({
       kind: "PAYMENT",
       descricao: `Pagamento para ${cliente?.nome ?? "cliente"} no valor de ${formatBRLFromCentavos(valorCentavos)}`,
@@ -231,7 +263,7 @@ export default function Cliente() {
     const saldoAtual = cliente?.saldo_centavos ?? 0;
     if (saldoAtual <= 0) return alert("Este cliente não possui saldo pendente.");
 
-    setSenhaOperador("");
+    setErroConfirmacaoOp(null);
     setPendingOp({
       kind: "SETTLE",
       descricao: `Quitação total de ${cliente?.nome ?? "cliente"} no valor de ${formatBRLFromCentavos(saldoAtual)}`,
@@ -248,6 +280,7 @@ export default function Cliente() {
     }
 
     setSenhaOperador("");
+    setErroConfirmacaoLixeira(null);
     setMotivoLixeira("");
     setPendingLixeira(true);
   }, [session, nav]);
@@ -270,7 +303,7 @@ export default function Cliente() {
   const cancelarOperacao = useCallback(() => {
     if (confirmandoOp) return;
     setPendingOp(null);
-    setSenhaOperador("");
+    setErroConfirmacaoOp(null);
   }, [confirmandoOp]);
 
   const cancelarLixeira = useCallback(() => {
@@ -278,23 +311,15 @@ export default function Cliente() {
     setPendingLixeira(false);
     setMotivoLixeira("");
     setSenhaOperador("");
+    setErroConfirmacaoLixeira(null);
   }, [confirmandoLixeira]);
 
   const confirmarOperacao = useCallback(async () => {
-    if (!session || !pendingOp) return;
-    if (!senhaOperador.trim()) {
-      alert("Digite a senha do operador.");
-      return;
-    }
+    if (!session || !pendingOp || confirmandoOp) return;
 
     setConfirmandoOp(true);
+    setErroConfirmacaoOp(null);
     try {
-      const senhaValida = await validarSenhaOperador(session.usuario, senhaOperador.trim(), session.id);
-      if (!senhaValida) {
-        alert("Senha do operador inválida.");
-        return;
-      }
-
       if (pendingOp.kind === "SALE") {
         await lancarVenda(clienteId, pendingOp.valorCentavos, pendingOp.obs, session.id);
       } else {
@@ -302,29 +327,33 @@ export default function Cliente() {
       }
 
       setPendingOp(null);
-      setSenhaOperador("");
+      setErroConfirmacaoOp(null);
       setValor("");
       setObs("");
       await load();
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Erro ao confirmar operação.");
+      setErroConfirmacaoOp(e instanceof Error ? e.message : "Erro ao confirmar operação.");
     } finally {
       setConfirmandoOp(false);
     }
-  }, [session, pendingOp, senhaOperador, clienteId, load]);
+  }, [session, pendingOp, confirmandoOp, clienteId, load]);
 
   const confirmarLixeira = useCallback(async () => {
-    if (!session) return;
+    if (!session || confirmandoLixeira) return;
     if (!senhaOperador.trim()) {
-      alert("Digite a senha do operador.");
+      setErroConfirmacaoLixeira("Digite a senha do operador.");
+      window.setTimeout(() => senhaLixeiraInputRef.current?.focus(), 0);
       return;
     }
 
     setConfirmandoLixeira(true);
+    setErroConfirmacaoLixeira(null);
     try {
-      const senhaValida = await validarSenhaOperador(session.usuario, senhaOperador.trim(), session.id);
+      const senhaValida = await withTimeout(validarSenhaOperador(session.usuario, senhaOperador.trim(), session.id));
       if (!senhaValida) {
-        alert("Senha do operador inválida.");
+        setErroConfirmacaoLixeira("Senha do operador inválida.");
+        setSenhaOperador("");
+        window.setTimeout(() => senhaLixeiraInputRef.current?.focus(), 0);
         return;
       }
 
@@ -332,13 +361,14 @@ export default function Cliente() {
       setPendingLixeira(false);
       setMotivoLixeira("");
       setSenhaOperador("");
+      setErroConfirmacaoLixeira(null);
       nav("/app/dashboard", { replace: true });
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Erro ao mandar cliente para a lixeira.");
+      setErroConfirmacaoLixeira(e instanceof Error ? e.message : "Erro ao mandar cliente para a lixeira.");
     } finally {
       setConfirmandoLixeira(false);
     }
-  }, [session, senhaOperador, clienteId, motivoLixeira, nav]);
+  }, [session, confirmandoLixeira, senhaOperador, clienteId, motivoLixeira, nav]);
 
   const imprimirExtrato = useCallback(
     (mode: "pdf" | "bematech") => {
@@ -559,6 +589,8 @@ export default function Cliente() {
 
   useEffect(() => {
     const onGlobalKeyDown = (e: KeyboardEvent) => {
+      if (pendingOp || pendingLixeira || editOpen) return;
+
       if (e.ctrlKey && e.key === "Enter") {
         e.preventDefault();
         onPagamento();
@@ -572,9 +604,10 @@ export default function Cliente() {
 
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => window.removeEventListener("keydown", onGlobalKeyDown);
-  }, [onPagamento, onQuitarTudo]);
+  }, [pendingOp, pendingLixeira, editOpen, onPagamento, onQuitarTudo]);
 
   if (loading) return <p className="muted">Carregando...</p>;
+  if (erroCarga) return <p className="muted">{erroCarga}</p>;
   if (!cliente) return <p className="muted">Cliente não encontrado.</p>;
 
   const saldoAtual = cliente.saldo_centavos ?? 0;
@@ -707,29 +740,13 @@ export default function Cliente() {
             <h4 className="confirm__title">Confirmação de Operação</h4>
             <p className="confirm__text">Você está prestes a registrar a seguinte operação:</p>
             <p className="confirm__desc">{pendingOp.descricao}</p>
-
-            <label className="field">
-              <span>Senha do operador</span>
-              <input
-                className="input"
-                type="password"
-                value={senhaOperador}
-                onChange={(e) => setSenhaOperador(e.target.value)}
-                placeholder="Digite sua senha"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  e.preventDefault();
-                  void confirmarOperacao();
-                }}
-              />
-            </label>
+            {erroConfirmacaoOp ? <p className="confirm__error">{erroConfirmacaoOp}</p> : null}
 
             <div className="confirm__actions">
               <button className="btn" type="button" onClick={cancelarOperacao} disabled={confirmandoOp}>
                 Não
               </button>
-              <button className="btn btn--primary" type="button" onClick={() => void confirmarOperacao()} disabled={confirmandoOp}>
+              <button className="btn btn--primary" type="button" onClick={() => void confirmarOperacao()} disabled={confirmandoOp} autoFocus>
                 {confirmandoOp ? "Confirmando..." : "Sim"}
               </button>
             </div>
@@ -757,12 +774,17 @@ export default function Cliente() {
             <label className="field">
               <span>Senha do operador</span>
               <input
+                ref={senhaLixeiraInputRef}
                 className="input"
                 type="password"
                 value={senhaOperador}
-                onChange={(e) => setSenhaOperador(e.target.value)}
+                onChange={(e) => {
+                  setSenhaOperador(e.target.value);
+                  if (erroConfirmacaoLixeira) setErroConfirmacaoLixeira(null);
+                }}
                 placeholder="Digite sua senha"
                 autoFocus
+                disabled={confirmandoLixeira}
                 onKeyDown={(e) => {
                   if (e.key !== "Enter") return;
                   e.preventDefault();
@@ -770,6 +792,7 @@ export default function Cliente() {
                 }}
               />
             </label>
+            {erroConfirmacaoLixeira ? <p className="confirm__error">{erroConfirmacaoLixeira}</p> : null}
 
             <div className="confirm__actions">
               <button className="btn" type="button" onClick={cancelarLixeira} disabled={confirmandoLixeira}>

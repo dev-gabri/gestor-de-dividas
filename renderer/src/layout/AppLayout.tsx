@@ -6,7 +6,7 @@ export default function AppLayout() {
   const nav = useNavigate();
   const location = useLocation();
   const session = getSession();
-  const appVersion = "1.0.4";
+  const appVersion = "1.0.5";
   const isAdmin = session?.role === "admin";
   const isClienteRoute = location.pathname.startsWith("/app/cliente/");
 
