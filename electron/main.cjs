@@ -1,10 +1,11 @@
-const { app, BrowserWindow, Menu, dialog, nativeImage } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, nativeImage } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const fs = require("fs");
 const path = require("path");
 
 const iconPath = path.join(__dirname, "..", "logo.png");
 const rendererDistIndex = path.join(__dirname, "..", "renderer", "dist", "index.html");
+const preloadPath = path.join(__dirname, "preload.cjs");
 const devServerUrl = process.env.ELECTRON_RENDERER_URL || "http://localhost:5173";
 const appId = "com.comercialfagundes.gestordedividas";
 let updateCheckInterval = null;
@@ -49,6 +50,72 @@ function attachWindowDiagnostics(win) {
     );
   });
 }
+
+function sanitizeFileName(value) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+}
+
+async function renderHtmlToPdfBuffer(html) {
+  const tempHtml = path.join(
+    app.getPath("temp"),
+    `gd-report-${Date.now()}-${Math.random().toString(36).slice(2)}.html`
+  );
+  await fs.promises.writeFile(tempHtml, html, "utf8");
+
+  const printWin = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+    },
+  });
+
+  try {
+    await printWin.loadFile(tempHtml);
+    return await printWin.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+      landscape: false,
+    });
+  } finally {
+    if (!printWin.isDestroyed()) {
+      printWin.destroy();
+    }
+    fs.promises.unlink(tempHtml).catch(() => {});
+  }
+}
+
+ipcMain.handle("reports:export-pdf", async (_event, payload) => {
+  const html = typeof payload?.html === "string" ? payload.html : "";
+  const fileName = typeof payload?.fileName === "string" ? payload.fileName : "extrato-cliente";
+
+  if (!html.trim()) {
+    throw new Error("Conteúdo do relatório não informado.");
+  }
+
+  const pdfBuffer = await renderHtmlToPdfBuffer(html);
+  const safeBaseName = sanitizeFileName(fileName) || "extrato-cliente";
+  const defaultPath = path.join(app.getPath("downloads"), `${safeBaseName}.pdf`);
+
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow ?? undefined, {
+    title: "Salvar extrato em PDF",
+    defaultPath,
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+  });
+
+  if (canceled || !filePath) {
+    return { canceled: true };
+  }
+
+  await fs.promises.writeFile(filePath, pdfBuffer);
+  return { canceled: false, filePath };
+});
 
 function setupAutoUpdater(win) {
   if (!app.isPackaged || process.platform !== "win32") return;
@@ -134,6 +201,9 @@ async function createWindow(appIcon) {
     autoHideMenuBar: true,
     webPreferences: {
       spellcheck: false,
+      contextIsolation: true,
+      sandbox: false,
+      preload: preloadPath,
     },
   });
   attachWindowDiagnostics(win);

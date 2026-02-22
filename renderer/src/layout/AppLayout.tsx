@@ -1,14 +1,41 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { clearSession, getSession } from "../lib/session";
 import "./AppLayout.css";
+
+const DASHBOARD_UPDATED_KEY = "gd_dashboard_last_updated_at";
+const DASHBOARD_UPDATED_EVENT = "gd-dashboard-updated";
+
+function formatDashboardUpdated(raw: string | null): string | null {
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleTimeString("pt-BR");
+}
 
 export default function AppLayout() {
   const nav = useNavigate();
   const location = useLocation();
   const session = getSession();
-  const appVersion = "1.0.5";
+  const appVersion = "1.0.6";
   const isAdmin = session?.role === "admin";
   const isClienteRoute = location.pathname.startsWith("/app/cliente/");
+  const [atualizadoLabel, setAtualizadoLabel] = useState<string | null>(() =>
+    formatDashboardUpdated(localStorage.getItem(DASHBOARD_UPDATED_KEY)),
+  );
+
+  useEffect(() => {
+    const refreshUpdatedLabel = () => {
+      setAtualizadoLabel(formatDashboardUpdated(localStorage.getItem(DASHBOARD_UPDATED_KEY)));
+    };
+
+    window.addEventListener("storage", refreshUpdatedLabel);
+    window.addEventListener(DASHBOARD_UPDATED_EVENT, refreshUpdatedLabel);
+    return () => {
+      window.removeEventListener("storage", refreshUpdatedLabel);
+      window.removeEventListener(DASHBOARD_UPDATED_EVENT, refreshUpdatedLabel);
+    };
+  }, []);
 
   function sair() {
     clearSession();
@@ -59,6 +86,9 @@ export default function AppLayout() {
           <button className="btn btn--ghost sidebar__logout" type="button" onClick={sair}>
             Sair do sistema
           </button>
+          <div className="sidebar__updated">
+            {atualizadoLabel ? `Atualizado às ${atualizadoLabel}` : "Aguardando atualização"}
+          </div>
           <div className="sidebar__version">Versão {appVersion}</div>
         </div>
       </aside>

@@ -3,6 +3,9 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { cadastrarCliente, formatBRLFromCentavos, listarClientesAtivos, resumoDashboard } from "../../lib/clients";
 import "./Dashboard.css";
 
+const DASHBOARD_UPDATED_KEY = "gd_dashboard_last_updated_at";
+const DASHBOARD_UPDATED_EVENT = "gd-dashboard-updated";
+
 type ClienteRow = {
   id: number;
   nome: string;
@@ -21,11 +24,10 @@ export default function Dashboard() {
   const [total, setTotal] = useState(0);
   const [devedores, setDevedores] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [ocultarValores, setOcultarValores] = useState(false);
+  const [ocultarValores, setOcultarValores] = useState(true);
   const [busca, setBusca] = useState("");
   const buscaDeferred = useDeferredValue(busca);
   const [erro, setErro] = useState<string | null>(null);
-  const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [nome, setNome] = useState("");
@@ -45,7 +47,9 @@ export default function Dashboard() {
       setClientes(c as ClienteRow[]);
       setTotal(r?.total_a_receber_centavos ?? 0);
       setDevedores(r?.qtd_devedores ?? 0);
-      setAtualizadoEm(new Date());
+      const updatedAtIso = new Date().toISOString();
+      localStorage.setItem(DASHBOARD_UPDATED_KEY, updatedAtIso);
+      window.dispatchEvent(new Event(DASHBOARD_UPDATED_EVENT));
     } catch (e: unknown) {
       setErro(e instanceof Error ? e.message : "Falha ao carregar o dashboard");
     } finally {
@@ -140,7 +144,7 @@ export default function Dashboard() {
         <div className="dash__heroOverlay">
           <div className="dash__heading">
             <p className="dash__kicker">Painel Financeiro</p>
-            <h2 className="dash__title">Clientes e Colaboradores</h2>
+            <h2 className="dash__title">Clientes</h2>
             <p className="dash__subtitle">Visualize saldos, encontre rapidamente um cliente e acompanhe as cobranças.</p>
           </div>
 
@@ -173,31 +177,31 @@ export default function Dashboard() {
       <section className="dash__panel">
         <div className="dash__tableTop">
           <label className="dash__searchWrap">
-            <span className="dash__searchLabel">Pesquisar colaborador/cliente</span>
+            <span className="dash__searchIcon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M16 16L21 21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </span>
             <input
               className="dash__search"
               type="text"
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="Digite nome ou telefone..."
+              placeholder="Pesquisar clientes"
+              aria-label="Pesquisar clientes"
             />
           </label>
-          <div className="dash__meta">
-            {atualizadoEm ? `Atualizado às ${atualizadoEm.toLocaleTimeString("pt-BR")}` : "Aguardando atualização"}
-          </div>
         </div>
 
         {erro ? <p className="dash__error">{erro}</p> : null}
 
         <div className="dash__table">
           <div className="dash__row dash__row--head">
-            <div>#</div>
-            <div>Cliente</div>
-            <div>Contato</div>
-            <div>Documento</div>
-            <div>Endereço</div>
-            <div>Situação</div>
-            <div>Saldo</div>
+            <div className="dash__headCell dash__headCell--id">#</div>
+            <div className="dash__headCell dash__headCell--cliente">Cliente</div>
+            <div className="dash__headCell dash__headCell--documento">Documento</div>
+            <div className="dash__headCell dash__headCell--saldo">Valor devedor</div>
           </div>
 
           {clientesFiltrados.map((c) => (
@@ -208,15 +212,10 @@ export default function Dashboard() {
               onClick={() => nav(`/app/cliente/${c.id}`)}
               title="Abrir cliente"
             >
-              <div className="dash__id">{c.id}</div>
-              <div className="dash__name">{c.nome}</div>
-              <div className="dash__muted">{c.telefone ?? "-"}</div>
-              <div className="dash__muted dash__doc">{c.cpf || c.rg || "-"}</div>
-              <div className="dash__muted dash__address">{c.endereco ?? "-"}</div>
-              <div className={c.saldo_centavos > 0 ? "dash__status dash__status--devedor" : "dash__status dash__status--ok"}>
-                {c.saldo_centavos > 0 ? "Devedor" : "Em dia"}
-              </div>
-              <div className={c.saldo_centavos > 0 ? "dash__saldo dash__saldo--pos" : "dash__saldo"}>
+              <div className="dash__id dash__cell--id">{c.id}</div>
+              <div className="dash__name dash__cell--cliente">{c.nome}</div>
+              <div className="dash__muted dash__doc dash__cell--documento">{c.cpf || c.rg || "-"}</div>
+              <div className={(c.saldo_centavos > 0 ? "dash__saldo dash__saldo--pos" : "dash__saldo") + " dash__cell--saldo"}>
                 {ocultarValores ? "R$ •••••" : formatBRLFromCentavos(c.saldo_centavos ?? 0)}
               </div>
             </button>

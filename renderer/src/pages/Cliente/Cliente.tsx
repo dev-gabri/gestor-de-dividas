@@ -44,6 +44,8 @@ type PendingOperation = {
   obs: string;
 };
 
+type PdfReportScope = "FULL_WITH_DEBT" | "DEBT_ONLY";
+
 type ExtratoViewRow = {
   id: number;
   type: "SALE" | "PAYMENT";
@@ -51,6 +53,8 @@ type ExtratoViewRow = {
   valorLabel: string;
   saldoAntesLabel: string;
   saldoDepoisLabel: string;
+  saldoAntesCentavos: number;
+  saldoDepoisCentavos: number;
   obsLabel: string;
   operadorLabel: string;
 };
@@ -153,6 +157,10 @@ export default function Cliente() {
   const [eEnd, setEEnd] = useState("");
   const [eCpf, setECpf] = useState("");
   const [eRg, setERg] = useState("");
+  const [pdfScopeModalOpen, setPdfScopeModalOpen] = useState(false);
+  const [pdfReportScope, setPdfReportScope] = useState<PdfReportScope>("FULL_WITH_DEBT");
+  const [exportandoPdf, setExportandoPdf] = useState(false);
+  const [erroExportacaoPdf, setErroExportacaoPdf] = useState<string | null>(null);
   const senhaLixeiraInputRef = useRef<HTMLInputElement | null>(null);
 
   const valorCentavos = useMemo(() => {
@@ -169,10 +177,17 @@ export default function Cliente() {
         valorLabel: formatBRLFromCentavos(row.valor_assinado_centavos ?? 0),
         saldoAntesLabel: formatBRLFromCentavos(row.saldo_antes_centavos ?? 0),
         saldoDepoisLabel: formatBRLFromCentavos(row.saldo_depois_centavos ?? 0),
+        saldoAntesCentavos: row.saldo_antes_centavos ?? 0,
+        saldoDepoisCentavos: row.saldo_depois_centavos ?? 0,
         obsLabel: row.obs ?? "-",
         operadorLabel: resolveOperadorLabel(row, operadoresPorId),
       })),
     [extrato, operadoresPorId],
+  );
+
+  const extratoDividaRows = useMemo<ExtratoViewRow[]>(
+    () => extratoViewRows.filter((row) => row.saldoAntesCentavos > 0 || row.saldoDepoisCentavos > 0),
+    [extratoViewRows],
   );
 
   const { qtdVendas, qtdPagamentos } = useMemo(
@@ -314,6 +329,19 @@ export default function Cliente() {
     setErroConfirmacaoLixeira(null);
   }, [confirmandoLixeira]);
 
+  const abrirExportacaoPdf = useCallback(() => {
+    if (!cliente) return;
+    setPdfReportScope("FULL_WITH_DEBT");
+    setErroExportacaoPdf(null);
+    setPdfScopeModalOpen(true);
+  }, [cliente]);
+
+  const fecharExportacaoPdf = useCallback(() => {
+    if (exportandoPdf) return;
+    setPdfScopeModalOpen(false);
+    setErroExportacaoPdf(null);
+  }, [exportandoPdf]);
+
   const confirmarOperacao = useCallback(async () => {
     if (!session || !pendingOp || confirmandoOp) return;
 
@@ -370,196 +398,317 @@ export default function Cliente() {
     }
   }, [session, confirmandoLixeira, senhaOperador, clienteId, motivoLixeira, nav]);
 
-  const imprimirExtrato = useCallback(
-    (mode: "pdf" | "bematech") => {
-      if (!cliente) return;
+  const exportarExtratoPdf = useCallback(async () => {
+    if (!cliente || exportandoPdf) return;
 
-      try {
-        const isBematech = mode === "bematech";
-        const documentoCliente = cliente.cpf || cliente.rg || "-";
-        const saldoAtualCliente = formatBRLFromCentavos(cliente.saldo_centavos ?? 0);
+    if (!window.electronAPI?.exportPdfReport) {
+      const isElectronRuntime = window.navigator.userAgent.toLowerCase().includes("electron");
+      setErroExportacaoPdf(
+        isElectronRuntime
+          ? "Módulo de PDF não carregado. Feche e abra o aplicativo novamente."
+          : "Exportação em PDF disponível apenas no aplicativo desktop.",
+      );
+      return;
+    }
 
-        const linhas = extratoViewRows
-          .map((r) => {
-            const tipo = r.type === "SALE" ? (isBematech ? "VENDA" : "Venda") : isBematech ? "PAGTO" : "Pagamento";
-
-            if (isBematech) {
-              return `
-                <div class="ticket__item">
-                  <div class="ticket__line">
-                    <strong>${tipo}</strong>
-                    <span>${escapeHtml(r.valorLabel)}</span>
-                  </div>
-                  <div class="ticket__muted">${escapeHtml(r.createdAtLabel)}</div>
-                  <div class="ticket__muted">Saldo depois: ${escapeHtml(r.saldoDepoisLabel)}</div>
-                  <div class="ticket__muted">Operador: ${escapeHtml(r.operadorLabel)}</div>
-                  <div class="ticket__muted">Obs: ${escapeHtml(r.obsLabel)}</div>
-                </div>
-              `;
-            }
-
-            return `
-              <tr>
-                <td>${escapeHtml(r.createdAtLabel)}</td>
-                <td>${tipo}</td>
-                <td>${escapeHtml(r.valorLabel)}</td>
-                <td>${escapeHtml(r.saldoDepoisLabel)}</td>
-                <td>${escapeHtml(r.operadorLabel)}</td>
-                <td>${escapeHtml(r.obsLabel)}</td>
-              </tr>
-            `;
-          })
-          .join("");
-
-        const conteudo = extratoViewRows.length
-          ? linhas
-          : isBematech
-            ? `<div class="ticket__empty">Sem movimentações no extrato.</div>`
-            : `<tr><td class="report__empty" colspan="6">Sem movimentações no extrato.</td></tr>`;
-
-        const html = `
-          <!doctype html>
-          <html lang="pt-BR">
-            <head>
-              <meta charset="utf-8" />
-              <title>Extrato - ${escapeHtml(cliente.nome)}</title>
-              <style>
-                * { box-sizing: border-box; }
-                body {
-                  margin: 0;
-                  color: #0f172a;
-                  font-family: ${isBematech ? '"Courier New", monospace' : '"Segoe UI", Arial, sans-serif'};
-                  font-size: ${isBematech ? "11px" : "13px"};
-                  line-height: 1.4;
-                }
-                @page {
-                  size: ${isBematech ? "80mm auto" : "A4"};
-                  margin: ${isBematech ? "4mm" : "12mm"};
-                }
-                .wrap {
-                  width: ${isBematech ? "72mm" : "100%"};
-                  margin: 0 auto;
-                }
-                .report__head {
-                  border-bottom: 1px dashed #94a3b8;
-                  padding-bottom: 8px;
-                  margin-bottom: 8px;
-                }
-                .report__title {
-                  margin: 0;
-                  font-size: ${isBematech ? "14px" : "20px"};
-                }
-                .report__meta {
-                  margin-top: 4px;
-                  color: #334155;
-                  display: grid;
-                  gap: 2px;
-                }
-                .report__hint {
-                  margin: 8px 0;
-                  color: #475569;
-                  font-size: ${isBematech ? "10px" : "12px"};
-                }
-                .report__table {
-                  width: 100%;
-                  border-collapse: collapse;
-                }
-                .report__table th,
-                .report__table td {
-                  border: 1px solid #cbd5e1;
-                  padding: 6px;
-                  text-align: left;
-                  vertical-align: top;
-                }
-                .report__table th {
-                  background: #eff6ff;
-                }
-                .report__empty {
-                  text-align: center;
-                  color: #64748b;
-                  padding: 16px;
-                }
-                .ticket__item {
-                  border-bottom: 1px dashed #94a3b8;
-                  padding: 8px 0;
-                }
-                .ticket__line {
-                  display: flex;
-                  justify-content: space-between;
-                  gap: 8px;
-                  font-weight: 700;
-                }
-                .ticket__muted {
-                  color: #334155;
-                }
-                .ticket__empty {
-                  color: #64748b;
-                  padding: 8px 0;
-                }
-              </style>
-            </head>
-            <body>
-              <div class="wrap">
-                <header class="report__head">
-                  <h1 class="report__title">${isBematech ? "Extrato - Bematech" : "Extrato do Cliente"}</h1>
-                  <div class="report__meta">
-                    <div><strong>Cliente:</strong> ${escapeHtml(cliente.nome)}</div>
-                    <div><strong>Documento:</strong> ${escapeHtml(documentoCliente)}</div>
-                    <div><strong>Telefone:</strong> ${escapeHtml(cliente.telefone ?? "-")}</div>
-                    <div><strong>Saldo atual:</strong> ${escapeHtml(saldoAtualCliente)}</div>
-                    <div><strong>Gerado em:</strong> ${escapeHtml(new Date().toLocaleString("pt-BR"))}</div>
-                  </div>
-                  <p class="report__hint">${
-                    isBematech
-                      ? "Selecione a impressora Bematech no diálogo para emitir no cupom."
-                      : "Use o diálogo de impressão para salvar em PDF."
-                  }</p>
-                </header>
-                ${
-                  isBematech
-                    ? `<section>${conteudo}</section>`
-                    : `
-                      <table class="report__table">
-                        <thead>
-                          <tr>
-                            <th>Data</th>
-                            <th>Tipo</th>
-                            <th>Movimento</th>
-                            <th>Saldo depois</th>
-                            <th>Operador</th>
-                            <th>Obs</th>
-                          </tr>
-                        </thead>
-                        <tbody>${conteudo}</tbody>
-                      </table>
-                    `
-                }
-              </div>
-              <script>
-                window.addEventListener("load", () => {
-                  setTimeout(() => window.print(), 120);
-                });
-                window.addEventListener("afterprint", () => window.close());
-              </script>
-            </body>
-          </html>
-        `;
-
-        const popup = window.open("", "_blank", "width=940,height=700");
-        if (!popup) {
-          alert("Não foi possível abrir a janela de impressão. Verifique bloqueio de pop-up.");
-          return;
-        }
-
-        popup.document.open();
-        popup.document.write(html);
-        popup.document.close();
-      } catch (e: unknown) {
-        alert(e instanceof Error ? e.message : "Falha ao preparar impressão do extrato.");
+    const renderTabelaRows = (rows: ExtratoViewRow[], emptyMessage: string) => {
+      if (!rows.length) {
+        return `<tr><td class="report__empty" colspan="7">${escapeHtml(emptyMessage)}</td></tr>`;
       }
-    },
-    [cliente, extratoViewRows],
-  );
+
+      return rows
+        .map((r) => {
+          const tipo = r.type === "SALE" ? "Venda" : "Pagamento";
+          return `
+            <tr>
+              <td>${escapeHtml(r.createdAtLabel)}</td>
+              <td>${tipo}</td>
+              <td>${escapeHtml(r.valorLabel)}</td>
+              <td>${escapeHtml(r.saldoAntesLabel)}</td>
+              <td>${escapeHtml(r.saldoDepoisLabel)}</td>
+              <td>${escapeHtml(r.operadorLabel)}</td>
+              <td>${escapeHtml(r.obsLabel)}</td>
+            </tr>
+          `;
+        })
+        .join("");
+    };
+
+    const renderTabela = (rows: ExtratoViewRow[], emptyMessage: string) => `
+      <table class="report__table">
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Tipo</th>
+            <th>Movimento</th>
+            <th>Saldo antes</th>
+            <th>Saldo depois</th>
+            <th>Operador</th>
+            <th>Obs</th>
+          </tr>
+        </thead>
+        <tbody>${renderTabelaRows(rows, emptyMessage)}</tbody>
+      </table>
+    `;
+
+    setExportandoPdf(true);
+    setErroExportacaoPdf(null);
+    try {
+      const documentoCliente = cliente.cpf || cliente.rg || "-";
+      const saldoAtualCliente = formatBRLFromCentavos(cliente.saldo_centavos ?? 0);
+      const formatoSelecionado =
+        pdfReportScope === "FULL_WITH_DEBT" ? "Histórico completo + extrato de dívida" : "Somente extrato de dívida";
+
+      const secaoDivida = `
+        <section class="report__section">
+          <h2 class="report__sectionTitle">Extrato de dívida</h2>
+          <p class="report__sectionHint">Movimentações em que havia saldo devedor (saldo antes ou saldo depois maior que zero).</p>
+          ${renderTabela(extratoDividaRows, "Sem movimentações com saldo devedor.")}
+        </section>
+      `;
+
+      const secaoHistoricoCompleto =
+        pdfReportScope === "FULL_WITH_DEBT"
+          ? `
+            <section class="report__section">
+              <h2 class="report__sectionTitle">Histórico completo</h2>
+              <p class="report__sectionHint">Todas as movimentações do cliente.</p>
+              ${renderTabela(extratoViewRows, "Sem movimentações no histórico.")}
+            </section>
+          `
+          : "";
+
+      const html = `
+        <!doctype html>
+        <html lang="pt-BR">
+          <head>
+            <meta charset="utf-8" />
+            <title>Extrato - ${escapeHtml(cliente.nome)}</title>
+            <style>
+              * { box-sizing: border-box; }
+              body {
+                margin: 0;
+                color: #0f172a;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 13px;
+                line-height: 1.45;
+              }
+              @page {
+                size: A4;
+                margin: 12mm;
+              }
+              .wrap {
+                width: 100%;
+              }
+              .report__head {
+                border-bottom: 1px solid #cbd5e1;
+                padding-bottom: 10px;
+                margin-bottom: 12px;
+              }
+              .report__title {
+                margin: 0;
+                font-size: 20px;
+              }
+              .report__meta {
+                margin-top: 6px;
+                color: #334155;
+                display: grid;
+                gap: 2px;
+              }
+              .report__section {
+                margin-top: 14px;
+              }
+              .report__sectionTitle {
+                margin: 0 0 4px;
+                font-size: 15px;
+              }
+              .report__sectionHint {
+                margin: 0 0 8px;
+                color: #475569;
+                font-size: 12px;
+              }
+              .report__table {
+                width: 100%;
+                border-collapse: collapse;
+              }
+              .report__table th,
+              .report__table td {
+                border: 1px solid #cbd5e1;
+                padding: 6px;
+                text-align: left;
+                vertical-align: top;
+              }
+              .report__table th {
+                background: #eff6ff;
+                font-size: 12px;
+              }
+              .report__empty {
+                text-align: center;
+                color: #64748b;
+                padding: 16px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="wrap">
+              <header class="report__head">
+                <h1 class="report__title">Extrato do Cliente</h1>
+                <div class="report__meta">
+                  <div><strong>Cliente:</strong> ${escapeHtml(cliente.nome)}</div>
+                  <div><strong>Documento:</strong> ${escapeHtml(documentoCliente)}</div>
+                  <div><strong>Telefone:</strong> ${escapeHtml(cliente.telefone ?? "-")}</div>
+                  <div><strong>Saldo atual:</strong> ${escapeHtml(saldoAtualCliente)}</div>
+                  <div><strong>Formato:</strong> ${escapeHtml(formatoSelecionado)}</div>
+                  <div><strong>Gerado em:</strong> ${escapeHtml(new Date().toLocaleString("pt-BR"))}</div>
+                </div>
+              </header>
+              ${secaoDivida}
+              ${secaoHistoricoCompleto}
+            </div>
+          </body>
+        </html>
+      `;
+
+      await window.electronAPI.exportPdfReport({
+        html,
+        fileName: `extrato-${cliente.nome}-${pdfReportScope === "DEBT_ONLY" ? "divida" : "completo-divida"}`,
+      });
+
+      setPdfScopeModalOpen(false);
+    } catch (e: unknown) {
+      setErroExportacaoPdf(e instanceof Error ? e.message : "Falha ao exportar PDF.");
+    } finally {
+      setExportandoPdf(false);
+    }
+  }, [cliente, exportandoPdf, pdfReportScope, extratoDividaRows, extratoViewRows]);
+
+  const imprimirExtratoBematech = useCallback(() => {
+    if (!cliente) return;
+
+    try {
+      const documentoCliente = cliente.cpf || cliente.rg || "-";
+      const saldoAtualCliente = formatBRLFromCentavos(cliente.saldo_centavos ?? 0);
+
+      const linhas = extratoViewRows
+        .map((r) => {
+          const tipo = r.type === "SALE" ? "VENDA" : "PAGTO";
+          return `
+            <div class="ticket__item">
+              <div class="ticket__line">
+                <strong>${tipo}</strong>
+                <span>${escapeHtml(r.valorLabel)}</span>
+              </div>
+              <div class="ticket__muted">${escapeHtml(r.createdAtLabel)}</div>
+              <div class="ticket__muted">Saldo depois: ${escapeHtml(r.saldoDepoisLabel)}</div>
+              <div class="ticket__muted">Operador: ${escapeHtml(r.operadorLabel)}</div>
+              <div class="ticket__muted">Obs: ${escapeHtml(r.obsLabel)}</div>
+            </div>
+          `;
+        })
+        .join("");
+
+      const conteudo = extratoViewRows.length ? linhas : `<div class="ticket__empty">Sem movimentações no extrato.</div>`;
+
+      const html = `
+        <!doctype html>
+        <html lang="pt-BR">
+          <head>
+            <meta charset="utf-8" />
+            <title>Extrato - ${escapeHtml(cliente.nome)}</title>
+            <style>
+              * { box-sizing: border-box; }
+              body {
+                margin: 0;
+                color: #0f172a;
+                font-family: "Courier New", monospace;
+                font-size: 11px;
+                line-height: 1.4;
+              }
+              @page {
+                size: 80mm auto;
+                margin: 4mm;
+              }
+              .wrap {
+                width: 72mm;
+                margin: 0 auto;
+              }
+              .report__head {
+                border-bottom: 1px dashed #94a3b8;
+                padding-bottom: 8px;
+                margin-bottom: 8px;
+              }
+              .report__title {
+                margin: 0;
+                font-size: 14px;
+              }
+              .report__meta {
+                margin-top: 4px;
+                color: #334155;
+                display: grid;
+                gap: 2px;
+              }
+              .report__hint {
+                margin: 8px 0;
+                color: #475569;
+                font-size: 10px;
+              }
+              .ticket__item {
+                border-bottom: 1px dashed #94a3b8;
+                padding: 8px 0;
+              }
+              .ticket__line {
+                display: flex;
+                justify-content: space-between;
+                gap: 8px;
+                font-weight: 700;
+              }
+              .ticket__muted {
+                color: #334155;
+              }
+              .ticket__empty {
+                color: #64748b;
+                padding: 8px 0;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="wrap">
+              <header class="report__head">
+                <h1 class="report__title">Extrato - Bematech</h1>
+                <div class="report__meta">
+                  <div><strong>Cliente:</strong> ${escapeHtml(cliente.nome)}</div>
+                  <div><strong>Documento:</strong> ${escapeHtml(documentoCliente)}</div>
+                  <div><strong>Telefone:</strong> ${escapeHtml(cliente.telefone ?? "-")}</div>
+                  <div><strong>Saldo atual:</strong> ${escapeHtml(saldoAtualCliente)}</div>
+                  <div><strong>Gerado em:</strong> ${escapeHtml(new Date().toLocaleString("pt-BR"))}</div>
+                </div>
+                <p class="report__hint">Selecione a impressora Bematech no diálogo para emitir no cupom.</p>
+              </header>
+              <section>${conteudo}</section>
+            </div>
+            <script>
+              window.addEventListener("load", () => {
+                setTimeout(() => window.print(), 120);
+              });
+              window.addEventListener("afterprint", () => window.close());
+            </script>
+          </body>
+        </html>
+      `;
+
+      const popup = window.open("", "_blank", "width=940,height=700");
+      if (!popup) {
+        alert("Não foi possível abrir a janela de impressão. Verifique bloqueio de pop-up.");
+        return;
+      }
+
+      popup.document.open();
+      popup.document.write(html);
+      popup.document.close();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Falha ao preparar impressão do extrato.");
+    }
+  }, [cliente, extratoViewRows]);
 
   async function salvarEdicao() {
     if (!session) return;
@@ -721,10 +870,10 @@ export default function Cliente() {
         <div className="cli__extratoHead">
           <h3 className="card__title">Extrato</h3>
           <div className="cli__extratoActions">
-            <button className="btn cli__btn-print-pdf" type="button" onClick={() => imprimirExtrato("pdf")}>
+            <button className="btn cli__btn-print-pdf" type="button" onClick={abrirExportacaoPdf}>
               Exportar PDF
             </button>
-            <button className="btn cli__btn-print-bematech" type="button" onClick={() => imprimirExtrato("bematech")}>
+            <button className="btn cli__btn-print-bematech" type="button" onClick={imprimirExtratoBematech}>
               Imprimir Bematech
             </button>
           </div>
@@ -733,6 +882,61 @@ export default function Cliente() {
           <ExtratoTimeline rows={extratoViewRows} />
         </div>
       </section>
+
+      {pdfScopeModalOpen ? (
+        <div className="confirm__backdrop">
+          <div className="confirm__card">
+            <h4 className="confirm__title">Exportar extrato em PDF</h4>
+            <p className="confirm__text">Escolha o conteúdo que será incluído no arquivo.</p>
+            <p className="confirm__desc">
+              Histórico: {extratoViewRows.length} movimentações | Com dívida: {extratoDividaRows.length} movimentações
+            </p>
+
+            <div className="cli__reportOptions">
+              <label className={pdfReportScope === "FULL_WITH_DEBT" ? "cli__reportOption cli__reportOption--active" : "cli__reportOption"}>
+                <input
+                  type="radio"
+                  name="pdf-report-scope"
+                  value="FULL_WITH_DEBT"
+                  checked={pdfReportScope === "FULL_WITH_DEBT"}
+                  onChange={() => setPdfReportScope("FULL_WITH_DEBT")}
+                  disabled={exportandoPdf}
+                />
+                <span className="cli__reportOptionBody">
+                  <span className="cli__reportOptionTitle">Histórico completo + extrato de dívida</span>
+                  <span className="cli__reportOptionText">Inclui todas as movimentações e também a seção só com saldo devedor.</span>
+                </span>
+              </label>
+
+              <label className={pdfReportScope === "DEBT_ONLY" ? "cli__reportOption cli__reportOption--active" : "cli__reportOption"}>
+                <input
+                  type="radio"
+                  name="pdf-report-scope"
+                  value="DEBT_ONLY"
+                  checked={pdfReportScope === "DEBT_ONLY"}
+                  onChange={() => setPdfReportScope("DEBT_ONLY")}
+                  disabled={exportandoPdf}
+                />
+                <span className="cli__reportOptionBody">
+                  <span className="cli__reportOptionTitle">Somente extrato de dívida</span>
+                  <span className="cli__reportOptionText">Inclui apenas movimentações em que havia saldo devedor.</span>
+                </span>
+              </label>
+            </div>
+
+            {erroExportacaoPdf ? <p className="confirm__error">{erroExportacaoPdf}</p> : null}
+
+            <div className="confirm__actions">
+              <button className="btn" type="button" onClick={fecharExportacaoPdf} disabled={exportandoPdf}>
+                Cancelar
+              </button>
+              <button className="btn btn--primary" type="button" onClick={() => void exportarExtratoPdf()} disabled={exportandoPdf}>
+                {exportandoPdf ? "Exportando..." : "Exportar PDF"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {pendingOp ? (
         <div className="confirm__backdrop">
