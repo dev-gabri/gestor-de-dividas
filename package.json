@@ -1,6 +1,6 @@
 {
   "name": "gestor-de-dividas",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Comercial Fagundes - Gestao de fiado em Electron + React",
   "main": "electron/main.cjs",
   "scripts": {
@@ -55,6 +55,7 @@
       "gatekeeperAssess": false
     },
     "win": {
+      "icon": "build/icon.ico",
       "artifactName": "Comercial-Fagundes-Setup.${ext}",
       "target": [
         {
@@ -64,6 +65,11 @@
           ]
         }
       ]
+    },
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
     },
     "linux": {
       "target": [

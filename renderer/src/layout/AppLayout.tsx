@@ -29,7 +29,7 @@ export default function AppLayout() {
   const nav = useNavigate();
   const location = useLocation();
   const session = getSession();
-  const appVersion = "1.0.8";
+  const appVersion = "1.0.9";
   const isAdmin = session?.role === "admin";
   const isClienteRoute = location.pathname.startsWith("/app/cliente/");
   const [atualizadoLabel, setAtualizadoLabel] = useState<string | null>(() =>
@@ -110,22 +110,9 @@ export default function AppLayout() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand__logo" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path
-                d="M2.5 3.5H4.5L6.2 13.5H18.3L20.2 6.5H6.1"
-                stroke="currentColor"
-                strokeWidth="1.9"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <circle cx="9" cy="18.4" r="1.2" fill="currentColor" />
-              <circle cx="16.6" cy="18.4" r="1.2" fill="currentColor" />
-            </svg>
-          </div>
+          <img className="brand__photo" src="/images/fagundes.jpeg" alt="Fagundes" />
           <div className="brand__text">
-            <div className="brand__title">Comercial Fagundes</div>
-            <div className="brand__sub">{session?.usuario ?? "Operador"}</div>
+            <div className="brand__title">Olá, {session?.usuario ?? "Operador"}</div>
           </div>
         </div>
 
