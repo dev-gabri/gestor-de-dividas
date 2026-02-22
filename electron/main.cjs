@@ -10,6 +10,15 @@ const devServerUrl = process.env.ELECTRON_RENDERER_URL || "http://localhost:5173
 const appId = "com.comercialfagundes.gestordedividas";
 let updateCheckInterval = null;
 let mainWindow = null;
+let updaterState = {
+  state: "idle",
+  message: null,
+  version: null,
+  percent: 0,
+  bytesPerSecond: 0,
+  transferred: 0,
+  total: 0,
+};
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -49,6 +58,19 @@ function attachWindowDiagnostics(win) {
       `Motivo: ${details.reason}${details.exitCode ? ` (código ${details.exitCode})` : ""}`
     );
   });
+}
+
+function broadcastUpdaterState(win = mainWindow) {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send("updater:state", updaterState);
+}
+
+function patchUpdaterState(patch, win = mainWindow) {
+  updaterState = {
+    ...updaterState,
+    ...patch,
+  };
+  broadcastUpdaterState(win);
 }
 
 function sanitizeFileName(value) {
@@ -117,6 +139,10 @@ ipcMain.handle("reports:export-pdf", async (_event, payload) => {
   return { canceled: false, filePath };
 });
 
+ipcMain.handle("updater:get-state", async () => {
+  return updaterState;
+});
+
 function setupAutoUpdater(win) {
   if (!app.isPackaged || process.platform !== "win32") return;
 
@@ -133,11 +159,44 @@ function setupAutoUpdater(win) {
 
   autoUpdater.on("error", (error) => {
     console.error("Erro no auto-update:", error?.message ?? error);
+    patchUpdaterState(
+      {
+        state: "error",
+        message: error?.message ?? "Falha ao baixar atualização.",
+      },
+      win,
+    );
   });
 
-  autoUpdater.on("update-available", () => {
+  autoUpdater.on("checking-for-update", () => {
+    patchUpdaterState(
+      {
+        state: "checking",
+        message: "Verificando atualização...",
+        percent: 0,
+        bytesPerSecond: 0,
+        transferred: 0,
+        total: 0,
+      },
+      win,
+    );
+  });
+
+  autoUpdater.on("update-available", (info) => {
     if (hasShownUpdateAvailable) return;
     hasShownUpdateAvailable = true;
+    patchUpdaterState(
+      {
+        state: "available",
+        message: "Atualização encontrada. Iniciando download...",
+        version: info?.version ?? null,
+        percent: 0,
+        bytesPerSecond: 0,
+        transferred: 0,
+        total: 0,
+      },
+      win,
+    );
 
     dialog
       .showMessageBox(win, {
@@ -152,9 +211,46 @@ function setupAutoUpdater(win) {
 
   autoUpdater.on("update-not-available", () => {
     hasShownUpdateAvailable = false;
+    patchUpdaterState(
+      {
+        state: "idle",
+        message: null,
+        version: null,
+        percent: 0,
+        bytesPerSecond: 0,
+        transferred: 0,
+        total: 0,
+      },
+      win,
+    );
   });
 
-  autoUpdater.on("update-downloaded", () => {
+  autoUpdater.on("download-progress", (progress) => {
+    const percent = Number.isFinite(progress?.percent) ? Math.max(0, Math.min(100, progress.percent)) : 0;
+    patchUpdaterState(
+      {
+        state: "downloading",
+        message: `Baixando atualização ${percent.toFixed(1)}%`,
+        percent,
+        bytesPerSecond: Math.max(0, progress?.bytesPerSecond ?? 0),
+        transferred: Math.max(0, progress?.transferred ?? 0),
+        total: Math.max(0, progress?.total ?? 0),
+      },
+      win,
+    );
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    patchUpdaterState(
+      {
+        state: "downloaded",
+        message: "Atualização pronta para instalar.",
+        version: info?.version ?? updaterState.version ?? null,
+        percent: 100,
+      },
+      win,
+    );
+
     dialog
       .showMessageBox(win, {
         type: "info",

@@ -12,8 +12,20 @@ type ExportPdfResult = {
   filePath?: string;
 };
 
+type UpdaterState = {
+  state: "idle" | "checking" | "available" | "downloading" | "downloaded" | "error";
+  message: string | null;
+  version: string | null;
+  percent: number;
+  bytesPerSecond: number;
+  transferred: number;
+  total: number;
+};
+
 interface Window {
   electronAPI?: {
     exportPdfReport: (payload: ExportPdfPayload) => Promise<ExportPdfResult>;
+    getUpdaterState: () => Promise<UpdaterState>;
+    onUpdaterState: (listener: (state: UpdaterState) => void) => () => void;
   };
 }
