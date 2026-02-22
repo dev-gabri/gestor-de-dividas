@@ -37,8 +37,9 @@ type ClienteData = {
   saldo_centavos: number | null;
 };
 
-type PendingOperation = {
-  kind: "SALE" | "PAYMENT" | "SETTLE";
+type LancamentoKind = "SALE" | "PAYMENT";
+
+type PendingSettle = {
   descricao: string;
   valorCentavos: number;
   obs: string;
@@ -70,6 +71,34 @@ function escapeHtml(value: string) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function parseValorParaCentavos(input: string) {
+  const raw = input.trim().replace(/[R$\s]/g, "");
+  if (!raw) return 0;
+
+  let normalized = raw;
+  const lastComma = normalized.lastIndexOf(",");
+  const lastDot = normalized.lastIndexOf(".");
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) {
+      normalized = normalized.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = normalized.replace(/,/g, "");
+    }
+  } else if (lastComma >= 0) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if ((normalized.match(/\./g) || []).length > 1 || /^\d+\.\d{3}$/.test(normalized)) {
+    normalized = normalized.replace(/\./g, "");
+  }
+
+  normalized = normalized.replace(/[^0-9.]/g, "");
+  if (!normalized) return 0;
+
+  const value = Number(normalized);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.round(value * 100);
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs = 15000): Promise<T> {
@@ -139,13 +168,16 @@ export default function Cliente() {
   const [loading, setLoading] = useState(true);
   const [erroCarga, setErroCarga] = useState<string | null>(null);
 
-  const [valor, setValor] = useState("");
-  const [obs, setObs] = useState("");
-
-  const [pendingOp, setPendingOp] = useState<PendingOperation | null>(null);
+  const [pendingLancamentoKind, setPendingLancamentoKind] = useState<LancamentoKind | null>(null);
+  const [valorLancamento, setValorLancamento] = useState("");
+  const [obsLancamento, setObsLancamento] = useState("");
+  const [confirmandoLancamento, setConfirmandoLancamento] = useState(false);
+  const [erroLancamento, setErroLancamento] = useState<string | null>(null);
+  const [pendingSettle, setPendingSettle] = useState<PendingSettle | null>(null);
   const [senhaOperador, setSenhaOperador] = useState("");
-  const [confirmandoOp, setConfirmandoOp] = useState(false);
-  const [erroConfirmacaoOp, setErroConfirmacaoOp] = useState<string | null>(null);
+  const [senhaQuitarTudo, setSenhaQuitarTudo] = useState("");
+  const [confirmandoQuitarTudo, setConfirmandoQuitarTudo] = useState(false);
+  const [erroQuitarTudo, setErroQuitarTudo] = useState<string | null>(null);
   const [pendingLixeira, setPendingLixeira] = useState(false);
   const [motivoLixeira, setMotivoLixeira] = useState("");
   const [confirmandoLixeira, setConfirmandoLixeira] = useState(false);
@@ -162,11 +194,8 @@ export default function Cliente() {
   const [exportandoPdf, setExportandoPdf] = useState(false);
   const [erroExportacaoPdf, setErroExportacaoPdf] = useState<string | null>(null);
   const senhaLixeiraInputRef = useRef<HTMLInputElement | null>(null);
-
-  const valorCentavos = useMemo(() => {
-    const only = valor.replace(/[^\d]/g, "");
-    return only ? Number(only) : 0;
-  }, [valor]);
+  const valorLancamentoInputRef = useRef<HTMLInputElement | null>(null);
+  const senhaQuitarTudoInputRef = useRef<HTMLInputElement | null>(null);
 
   const extratoViewRows = useMemo<ExtratoViewRow[]>(
     () =>
@@ -247,40 +276,31 @@ export default function Cliente() {
     void load();
   }, [load]);
 
-  const onVenda = useCallback(() => {
-    if (!session) return;
-    if (valorCentavos <= 0) return alert("Informe um valor válido.");
+  const abrirLancamento = useCallback(
+    (kind: LancamentoKind) => {
+      if (!session) {
+        alert("Sessão expirada. Faça login novamente.");
+        nav("/", { replace: true });
+        return;
+      }
 
-    setErroConfirmacaoOp(null);
-    setPendingOp({
-      kind: "SALE",
-      descricao: `Venda para ${cliente?.nome ?? "cliente"} no valor de ${formatBRLFromCentavos(valorCentavos)}`,
-      valorCentavos,
-      obs,
-    });
-  }, [session, valorCentavos, cliente, obs]);
-
-  const onPagamento = useCallback(() => {
-    if (!session) return;
-    if (valorCentavos <= 0) return alert("Informe um valor válido.");
-
-    setErroConfirmacaoOp(null);
-    setPendingOp({
-      kind: "PAYMENT",
-      descricao: `Pagamento para ${cliente?.nome ?? "cliente"} no valor de ${formatBRLFromCentavos(valorCentavos)}`,
-      valorCentavos,
-      obs,
-    });
-  }, [session, valorCentavos, cliente, obs]);
+      setPendingLancamentoKind(kind);
+      setValorLancamento("");
+      setObsLancamento("");
+      setErroLancamento(null);
+      window.setTimeout(() => valorLancamentoInputRef.current?.focus(), 0);
+    },
+    [session, nav],
+  );
 
   const onQuitarTudo = useCallback(() => {
     if (!session) return;
     const saldoAtual = cliente?.saldo_centavos ?? 0;
     if (saldoAtual <= 0) return alert("Este cliente não possui saldo pendente.");
 
-    setErroConfirmacaoOp(null);
-    setPendingOp({
-      kind: "SETTLE",
+    setSenhaQuitarTudo("");
+    setErroQuitarTudo(null);
+    setPendingSettle({
       descricao: `Quitação total de ${cliente?.nome ?? "cliente"} no valor de ${formatBRLFromCentavos(saldoAtual)}`,
       valorCentavos: saldoAtual,
       obs: "Quitação total",
@@ -315,11 +335,13 @@ export default function Cliente() {
     setEditOpen(false);
   }, [editSaving]);
 
-  const cancelarOperacao = useCallback(() => {
-    if (confirmandoOp) return;
-    setPendingOp(null);
-    setErroConfirmacaoOp(null);
-  }, [confirmandoOp]);
+  const cancelarLancamento = useCallback(() => {
+    if (confirmandoLancamento) return;
+    setPendingLancamentoKind(null);
+    setValorLancamento("");
+    setObsLancamento("");
+    setErroLancamento(null);
+  }, [confirmandoLancamento]);
 
   const cancelarLixeira = useCallback(() => {
     if (confirmandoLixeira) return;
@@ -328,6 +350,13 @@ export default function Cliente() {
     setSenhaOperador("");
     setErroConfirmacaoLixeira(null);
   }, [confirmandoLixeira]);
+
+  const cancelarQuitarTudo = useCallback(() => {
+    if (confirmandoQuitarTudo) return;
+    setPendingSettle(null);
+    setSenhaQuitarTudo("");
+    setErroQuitarTudo(null);
+  }, [confirmandoQuitarTudo]);
 
   const abrirExportacaoPdf = useCallback(() => {
     if (!cliente) return;
@@ -342,29 +371,68 @@ export default function Cliente() {
     setErroExportacaoPdf(null);
   }, [exportandoPdf]);
 
-  const confirmarOperacao = useCallback(async () => {
-    if (!session || !pendingOp || confirmandoOp) return;
+  const confirmarLancamento = useCallback(async () => {
+    if (!session || !pendingLancamentoKind || confirmandoLancamento) return;
 
-    setConfirmandoOp(true);
-    setErroConfirmacaoOp(null);
+    const valorCentavos = parseValorParaCentavos(valorLancamento);
+    if (valorCentavos <= 0) {
+      setErroLancamento("Informe um valor válido. Exemplo: 8,00");
+      window.setTimeout(() => valorLancamentoInputRef.current?.focus(), 0);
+      return;
+    }
+
+    setConfirmandoLancamento(true);
+    setErroLancamento(null);
     try {
-      if (pendingOp.kind === "SALE") {
-        await lancarVenda(clienteId, pendingOp.valorCentavos, pendingOp.obs, session.id);
+      const obs = obsLancamento.trim();
+      if (pendingLancamentoKind === "SALE") {
+        await lancarVenda(clienteId, valorCentavos, obs, session.id);
       } else {
-        await receberPagamento(clienteId, pendingOp.valorCentavos, pendingOp.obs, session.id);
+        await receberPagamento(clienteId, valorCentavos, obs, session.id);
       }
 
-      setPendingOp(null);
-      setErroConfirmacaoOp(null);
-      setValor("");
-      setObs("");
+      setPendingLancamentoKind(null);
+      setValorLancamento("");
+      setObsLancamento("");
+      setErroLancamento(null);
       await load();
     } catch (e: unknown) {
-      setErroConfirmacaoOp(e instanceof Error ? e.message : "Erro ao confirmar operação.");
+      setErroLancamento(e instanceof Error ? e.message : "Erro ao confirmar operação.");
     } finally {
-      setConfirmandoOp(false);
+      setConfirmandoLancamento(false);
     }
-  }, [session, pendingOp, confirmandoOp, clienteId, load]);
+  }, [session, pendingLancamentoKind, confirmandoLancamento, valorLancamento, obsLancamento, clienteId, load]);
+
+  const confirmarQuitarTudo = useCallback(async () => {
+    if (!session || !pendingSettle || confirmandoQuitarTudo) return;
+    if (!senhaQuitarTudo.trim()) {
+      setErroQuitarTudo("Digite a senha do operador.");
+      window.setTimeout(() => senhaQuitarTudoInputRef.current?.focus(), 0);
+      return;
+    }
+
+    setConfirmandoQuitarTudo(true);
+    setErroQuitarTudo(null);
+    try {
+      const senhaValida = await withTimeout(validarSenhaOperador(session.usuario, senhaQuitarTudo.trim(), session.id));
+      if (!senhaValida) {
+        setErroQuitarTudo("Senha do operador inválida.");
+        setSenhaQuitarTudo("");
+        window.setTimeout(() => senhaQuitarTudoInputRef.current?.focus(), 0);
+        return;
+      }
+
+      await receberPagamento(clienteId, pendingSettle.valorCentavos, pendingSettle.obs, session.id);
+      setPendingSettle(null);
+      setSenhaQuitarTudo("");
+      setErroQuitarTudo(null);
+      await load();
+    } catch (e: unknown) {
+      setErroQuitarTudo(e instanceof Error ? e.message : "Erro ao confirmar quitação.");
+    } finally {
+      setConfirmandoQuitarTudo(false);
+    }
+  }, [session, pendingSettle, confirmandoQuitarTudo, senhaQuitarTudo, clienteId, load]);
 
   const confirmarLixeira = useCallback(async () => {
     if (!session || confirmandoLixeira) return;
@@ -738,12 +806,7 @@ export default function Cliente() {
 
   useEffect(() => {
     const onGlobalKeyDown = (e: KeyboardEvent) => {
-      if (pendingOp || pendingLixeira || editOpen) return;
-
-      if (e.ctrlKey && e.key === "Enter") {
-        e.preventDefault();
-        onPagamento();
-      }
+      if (pendingLancamentoKind || pendingSettle || pendingLixeira || editOpen || pdfScopeModalOpen) return;
 
       if (e.ctrlKey && e.key.toLowerCase() === "q") {
         e.preventDefault();
@@ -753,7 +816,7 @@ export default function Cliente() {
 
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => window.removeEventListener("keydown", onGlobalKeyDown);
-  }, [pendingOp, pendingLixeira, editOpen, onPagamento, onQuitarTudo]);
+  }, [pendingLancamentoKind, pendingSettle, pendingLixeira, editOpen, pdfScopeModalOpen, onQuitarTudo]);
 
   if (loading) return <p className="muted">Carregando...</p>;
   if (erroCarga) return <p className="muted">{erroCarga}</p>;
@@ -811,58 +874,20 @@ export default function Cliente() {
       <section className="cli__layout">
         <div className="card cli__card cli__card--form">
           <h3 className="card__title">Lançamentos</h3>
-          <p className="cli__shortcuts">
-            Atalhos: Enter no campo Valor = Venda | Enter no campo Observação = Pagamento | Ctrl+Enter = Pagamento (em qualquer campo) |
-            Ctrl+Q = Quitar tudo
-          </p>
+          <p className="cli__shortcuts">Clique em Venda ou Pagamento para abrir o card de lançamento e informar o valor corretamente em reais.</p>
 
-          <div className="grid">
-            <label className="field">
-              <span>Valor (centavos)</span>
-              <input
-                className="input"
-                value={valor}
-                onChange={(e) => setValor(e.target.value)}
-                placeholder="Ex: 2500 (R$ 25,00)"
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  e.preventDefault();
-                  if (e.ctrlKey) {
-                    onPagamento();
-                  } else {
-                    onVenda();
-                  }
-                }}
-              />
-            </label>
-
-            <label className="field">
-              <span>Obs</span>
-              <input
-                className="input"
-                value={obs}
-                onChange={(e) => setObs(e.target.value)}
-                placeholder="Observação da operação (opcional)"
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  e.preventDefault();
-                  onPagamento();
-                }}
-              />
-            </label>
-          </div>
-
-          <div className="actions">
-            <button className="btn cli__btn-venda" onClick={onVenda} type="button">
-              + Venda
+          <div className="cli__launchType">
+            <button className="btn cli__btn-venda" onClick={() => abrirLancamento("SALE")} type="button">
+              Venda
             </button>
-            <button className="btn cli__btn-pagamento" onClick={onPagamento} type="button">
-              + Pagamento
+            <button className="btn cli__btn-pagamento" onClick={() => abrirLancamento("PAYMENT")} type="button">
+              Pagamento
             </button>
             <button className="btn cli__btn-quitar" onClick={onQuitarTudo} type="button">
               Quitar Tudo
             </button>
           </div>
+          <p className="cli__launchPlaceholder">Atalho disponível: Ctrl+Q para abrir a quitação total.</p>
         </div>
       </section>
 
@@ -938,20 +963,100 @@ export default function Cliente() {
         </div>
       ) : null}
 
-      {pendingOp ? (
+      {pendingLancamentoKind ? (
         <div className="confirm__backdrop">
           <div className="confirm__card">
-            <h4 className="confirm__title">Confirmação de Operação</h4>
-            <p className="confirm__text">Você está prestes a registrar a seguinte operação:</p>
-            <p className="confirm__desc">{pendingOp.descricao}</p>
-            {erroConfirmacaoOp ? <p className="confirm__error">{erroConfirmacaoOp}</p> : null}
+            <h4 className="confirm__title">{pendingLancamentoKind === "SALE" ? "Lançar venda" : "Lançar pagamento"}</h4>
+            <p className="confirm__text">Informe o valor da operação e confirme.</p>
+
+            <label className="field">
+              <span>Valor (R$)</span>
+              <input
+                ref={valorLancamentoInputRef}
+                className="input"
+                value={valorLancamento}
+                onChange={(e) => {
+                  setValorLancamento(e.target.value);
+                  if (erroLancamento) setErroLancamento(null);
+                }}
+                placeholder="Ex: 8,00"
+                autoFocus
+                disabled={confirmandoLancamento}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void confirmarLancamento();
+                }}
+              />
+            </label>
+
+            <label className="field">
+              <span>Obs (opcional)</span>
+              <input
+                className="input"
+                value={obsLancamento}
+                onChange={(e) => setObsLancamento(e.target.value)}
+                placeholder="Descrição da operação"
+                disabled={confirmandoLancamento}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void confirmarLancamento();
+                }}
+              />
+            </label>
+
+            {erroLancamento ? <p className="confirm__error">{erroLancamento}</p> : null}
 
             <div className="confirm__actions">
-              <button className="btn" type="button" onClick={cancelarOperacao} disabled={confirmandoOp}>
-                Não
+              <button className="btn" type="button" onClick={cancelarLancamento} disabled={confirmandoLancamento}>
+                Cancelar
               </button>
-              <button className="btn btn--primary" type="button" onClick={() => void confirmarOperacao()} disabled={confirmandoOp} autoFocus>
-                {confirmandoOp ? "Confirmando..." : "Sim"}
+              <button className="btn btn--primary" type="button" onClick={() => void confirmarLancamento()} disabled={confirmandoLancamento}>
+                {confirmandoLancamento ? "Confirmando..." : pendingLancamentoKind === "SALE" ? "Confirmar venda" : "Confirmar pagamento"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingSettle ? (
+        <div className="confirm__backdrop">
+          <div className="confirm__card">
+            <h4 className="confirm__title">Quitar tudo</h4>
+            <p className="confirm__text">Digite a senha do operador para confirmar a quitação total.</p>
+            <p className="confirm__desc">{pendingSettle.descricao}</p>
+
+            <label className="field">
+              <span>Senha do operador</span>
+              <input
+                ref={senhaQuitarTudoInputRef}
+                className="input"
+                type="password"
+                value={senhaQuitarTudo}
+                onChange={(e) => {
+                  setSenhaQuitarTudo(e.target.value);
+                  if (erroQuitarTudo) setErroQuitarTudo(null);
+                }}
+                placeholder="Digite sua senha"
+                autoFocus
+                disabled={confirmandoQuitarTudo}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void confirmarQuitarTudo();
+                }}
+              />
+            </label>
+
+            {erroQuitarTudo ? <p className="confirm__error">{erroQuitarTudo}</p> : null}
+
+            <div className="confirm__actions">
+              <button className="btn" type="button" onClick={cancelarQuitarTudo} disabled={confirmandoQuitarTudo}>
+                Cancelar
+              </button>
+              <button className="btn btn--primary" type="button" onClick={() => void confirmarQuitarTudo()} disabled={confirmandoQuitarTudo}>
+                {confirmandoQuitarTudo ? "Confirmando..." : "Quitar tudo"}
               </button>
             </div>
           </div>

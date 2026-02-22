@@ -29,7 +29,7 @@ export default function AppLayout() {
   const nav = useNavigate();
   const location = useLocation();
   const session = getSession();
-  const appVersion = "1.0.7";
+  const appVersion = "1.0.8";
   const isAdmin = session?.role === "admin";
   const isClienteRoute = location.pathname.startsWith("/app/cliente/");
   const [atualizadoLabel, setAtualizadoLabel] = useState<string | null>(() =>
