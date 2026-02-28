@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { clearSession, getSession } from "../lib/session";
+import { validarSenhaOperador } from "../lib/auth";
+import { listarOperadores, type OperadorRow } from "../lib/operadores";
+import { clearSession, getSession, setSession, type SessionUser } from "../lib/session";
 import "./AppLayout.css";
 
 const DASHBOARD_UPDATED_KEY = "gd_dashboard_last_updated_at";
@@ -28,14 +30,85 @@ function formatBytes(value: number) {
 export default function AppLayout() {
   const nav = useNavigate();
   const location = useLocation();
-  const session = getSession();
-  const appVersion = "1.0.10";
+  const [session, setSessionState] = useState<SessionUser | null>(() => getSession());
+  const appVersion = __APP_VERSION__;
+  const brandPhotoSrc = `${import.meta.env.BASE_URL}images/company/fagundes-supermercado.png`;
   const isAdmin = session?.role === "admin";
   const isClienteRoute = location.pathname.startsWith("/app/cliente/");
+  const [trocaOperadorOpen, setTrocaOperadorOpen] = useState(false);
+  const [trocaOperadorLoading, setTrocaOperadorLoading] = useState(false);
+  const [trocaOperadorListaErro, setTrocaOperadorListaErro] = useState<string | null>(null);
+  const [trocaOperadorAuthErro, setTrocaOperadorAuthErro] = useState<string | null>(null);
+  const [operadoresAtivos, setOperadoresAtivos] = useState<OperadorRow[]>([]);
+  const [operadorTrocaSelecionado, setOperadorTrocaSelecionado] = useState<OperadorRow | null>(null);
+  const [senhaTrocaOperador, setSenhaTrocaOperador] = useState("");
+  const [confirmandoTrocaOperador, setConfirmandoTrocaOperador] = useState(false);
+  const trocaOperadorRef = useRef<HTMLDivElement | null>(null);
+  const senhaTrocaInputRef = useRef<HTMLInputElement | null>(null);
   const [atualizadoLabel, setAtualizadoLabel] = useState<string | null>(() =>
     formatDashboardUpdated(localStorage.getItem(DASHBOARD_UPDATED_KEY)),
   );
   const [updaterState, setUpdaterState] = useState<UpdaterState | null>(null);
+
+  useEffect(() => {
+    if (!trocaOperadorOpen) return;
+    let mounted = true;
+
+    async function loadOperadores() {
+      setTrocaOperadorLoading(true);
+      setTrocaOperadorListaErro(null);
+      try {
+        const rows = await listarOperadores();
+        if (!mounted) return;
+        const ativos = rows
+          .filter((row) => row.active)
+          .sort((a, b) => a.usuario.localeCompare(b.usuario, "pt-BR", { sensitivity: "base" }));
+        setOperadoresAtivos(ativos);
+      } catch (error: unknown) {
+        if (!mounted) return;
+        setTrocaOperadorListaErro(error instanceof Error ? error.message : "Erro ao carregar operadores.");
+      } finally {
+        if (mounted) setTrocaOperadorLoading(false);
+      }
+    }
+
+    void loadOperadores();
+
+    return () => {
+      mounted = false;
+    };
+  }, [trocaOperadorOpen]);
+
+  useEffect(() => {
+    if (trocaOperadorOpen) return;
+    setTrocaOperadorListaErro(null);
+    setTrocaOperadorAuthErro(null);
+    setOperadorTrocaSelecionado(null);
+    setSenhaTrocaOperador("");
+    setConfirmandoTrocaOperador(false);
+  }, [trocaOperadorOpen]);
+
+  useEffect(() => {
+    if (!trocaOperadorOpen) return;
+
+    const onWindowClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (trocaOperadorRef.current?.contains(target)) return;
+      setTrocaOperadorOpen(false);
+    };
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setTrocaOperadorOpen(false);
+    };
+
+    window.addEventListener("mousedown", onWindowClick);
+    window.addEventListener("keydown", onEsc);
+    return () => {
+      window.removeEventListener("mousedown", onWindowClick);
+      window.removeEventListener("keydown", onEsc);
+    };
+  }, [trocaOperadorOpen]);
 
   useEffect(() => {
     const refreshUpdatedLabel = () => {
@@ -75,7 +148,67 @@ export default function AppLayout() {
 
   function sair() {
     clearSession();
+    setSessionState(null);
     nav("/", { replace: true });
+  }
+
+  function toggleTrocaOperador() {
+    setTrocaOperadorOpen((current) => !current);
+  }
+
+  function selecionarOperadorParaTroca(operador: OperadorRow) {
+    if (confirmandoTrocaOperador) return;
+    if (session?.id === operador.id) {
+      setTrocaOperadorOpen(false);
+      return;
+    }
+
+    setOperadorTrocaSelecionado(operador);
+    setSenhaTrocaOperador("");
+    setTrocaOperadorAuthErro(null);
+    window.setTimeout(() => senhaTrocaInputRef.current?.focus(), 0);
+  }
+
+  function cancelarTrocaOperador() {
+    if (confirmandoTrocaOperador) return;
+    setOperadorTrocaSelecionado(null);
+    setSenhaTrocaOperador("");
+    setTrocaOperadorAuthErro(null);
+  }
+
+  async function confirmarTrocaOperador() {
+    if (!operadorTrocaSelecionado || confirmandoTrocaOperador) return;
+    if (!senhaTrocaOperador.trim()) {
+      setTrocaOperadorAuthErro("Digite a senha do operador selecionado.");
+      window.setTimeout(() => senhaTrocaInputRef.current?.focus(), 0);
+      return;
+    }
+
+    setConfirmandoTrocaOperador(true);
+    setTrocaOperadorAuthErro(null);
+    try {
+      const senhaValida = await validarSenhaOperador(operadorTrocaSelecionado.usuario, senhaTrocaOperador.trim(), operadorTrocaSelecionado.id);
+      if (!senhaValida) {
+        setTrocaOperadorAuthErro("Senha inválida para este operador.");
+        setSenhaTrocaOperador("");
+        window.setTimeout(() => senhaTrocaInputRef.current?.focus(), 0);
+        return;
+      }
+
+      const operador = operadorTrocaSelecionado;
+      const novaSessao: SessionUser = { id: operador.id, usuario: operador.usuario, role: operador.role };
+      setSession(novaSessao);
+      setSessionState(novaSessao);
+      setTrocaOperadorOpen(false);
+
+      if (operador.role !== "admin" && location.pathname.startsWith("/app/operadores")) {
+        nav("/app/dashboard", { replace: true });
+      }
+    } catch (error: unknown) {
+      setTrocaOperadorAuthErro(error instanceof Error ? error.message : "Erro ao validar senha do operador.");
+    } finally {
+      setConfirmandoTrocaOperador(false);
+    }
   }
 
   const updatePercent = Math.max(0, Math.min(100, updaterState?.percent ?? 0));
@@ -110,9 +243,106 @@ export default function AppLayout() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <img className="brand__photo" src="/images/company/fagundes-supermercado.png" alt="Fagundes Supermercado" />
+          <img className="brand__photo" src={brandPhotoSrc} alt="Fagundes Supermercado" />
           <div className="brand__text">
-            <div className="brand__title">Olá, {session?.usuario ?? "Operador"}</div>
+            <div className="brand__operator" ref={trocaOperadorRef}>
+              <button
+                className="brand__operatorButton"
+                type="button"
+                onClick={toggleTrocaOperador}
+                aria-haspopup="menu"
+                aria-expanded={trocaOperadorOpen}
+                aria-controls="troca-rapida-operador-menu"
+              >
+                <div className="brand__title">Olá, {session?.usuario ?? "Operador"}</div>
+                <span className="brand__operatorHint">Troca rápida de operador</span>
+              </button>
+
+              {trocaOperadorOpen ? (
+                <div className="brand__switcher" id="troca-rapida-operador-menu" aria-label="Troca rápida de operador">
+                  <div className="brand__switcherHeader">
+                    <strong>Troca rápida</strong>
+                    <p>Selecione um operador e confirme com a senha dele.</p>
+                  </div>
+
+                  {trocaOperadorLoading ? <p className="brand__switcherState">Carregando operadores...</p> : null}
+                  {!trocaOperadorLoading && trocaOperadorListaErro ? <p className="brand__switcherState brand__switcherState--error">{trocaOperadorListaErro}</p> : null}
+                  {!trocaOperadorLoading && !trocaOperadorListaErro && operadoresAtivos.length === 0 ? (
+                    <p className="brand__switcherState">Nenhum operador ativo.</p>
+                  ) : null}
+                  {!trocaOperadorLoading && !trocaOperadorListaErro
+                    ? (
+                        <div className="brand__switcherList">
+                          {operadoresAtivos.map((operador) => (
+                            <button
+                              key={operador.id}
+                              className={
+                                "brand__switcherItem" +
+                                (session?.id === operador.id ? " is-current" : "") +
+                                (operadorTrocaSelecionado?.id === operador.id ? " is-selected" : "")
+                              }
+                              type="button"
+                              onClick={() => selecionarOperadorParaTroca(operador)}
+                              disabled={confirmandoTrocaOperador}
+                            >
+                              <span>{operador.usuario}</span>
+                              <small>{operador.role === "admin" ? "Administrador" : "Operador"}</small>
+                            </button>
+                          ))}
+                        </div>
+                      )
+                    : null}
+
+                  {operadorTrocaSelecionado ? (
+                    <div className="brand__switcherAuth">
+                      <p className="brand__switcherAuthTitle">
+                        Trocar para <strong>{operadorTrocaSelecionado.usuario}</strong>
+                      </p>
+                      <label className="brand__switcherField">
+                        <span>Senha do operador</span>
+                        <input
+                          ref={senhaTrocaInputRef}
+                          className="brand__switcherInput"
+                          type="password"
+                          inputMode="numeric"
+                          value={senhaTrocaOperador}
+                          onChange={(e) => {
+                            setSenhaTrocaOperador(e.target.value.replace(/\D/g, ""));
+                            if (trocaOperadorAuthErro) setTrocaOperadorAuthErro(null);
+                          }}
+                          placeholder="Digite a senha numérica"
+                          maxLength={8}
+                          disabled={confirmandoTrocaOperador}
+                          onKeyDown={(e) => {
+                            if (e.key !== "Enter") return;
+                            e.preventDefault();
+                            void confirmarTrocaOperador();
+                          }}
+                        />
+                      </label>
+
+                      {trocaOperadorAuthErro ? <p className="brand__switcherState brand__switcherState--error">{trocaOperadorAuthErro}</p> : null}
+
+                      <div className="brand__switcherActions">
+                        <button className="brand__switcherAction" type="button" onClick={cancelarTrocaOperador} disabled={confirmandoTrocaOperador}>
+                          Cancelar
+                        </button>
+                        <button
+                          className="brand__switcherAction brand__switcherAction--primary"
+                          type="button"
+                          onClick={() => void confirmarTrocaOperador()}
+                          disabled={confirmandoTrocaOperador}
+                        >
+                          {confirmandoTrocaOperador ? "Confirmando..." : "Entrar com este operador"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="brand__switcherState brand__switcherState--hint">Escolha um operador para continuar.</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
 
