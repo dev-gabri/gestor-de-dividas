@@ -1,6 +1,6 @@
 {
   "name": "gestor-de-dividas",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "Comercial Fagundes - Gestao de fiado em Electron + React",
   "main": "electron/main.cjs",
   "scripts": {
@@ -35,12 +35,12 @@
     "appId": "com.comercialfagundes.gestordedividas",
     "productName": "Comercial Fagundes",
     "directories": {
-      "buildResources": "build"
+      "buildResources": "resources"
     },
     "files": [
       "electron/**/*",
       "renderer/dist/**/*",
-      "logo.png",
+      "renderer/public/**/*",
       "package.json"
     ],
     "asar": true,
@@ -49,13 +49,13 @@
         "dmg"
       ],
       "category": "public.app-category.business",
-      "icon": "build/icon.icns",
+      "icon": "resources/icons/app-icon.icns",
       "identity": "-",
       "hardenedRuntime": false,
       "gatekeeperAssess": false
     },
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "resources/icons/app-icon.ico",
       "artifactName": "Comercial-Fagundes-Setup.${ext}",
       "target": [
         {
@@ -67,9 +67,9 @@
       ]
     },
     "nsis": {
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerHeaderIcon": "build/icon.ico"
+      "installerIcon": "resources/icons/app-icon.ico",
+      "uninstallerIcon": "resources/icons/app-icon.ico",
+      "installerHeaderIcon": "resources/icons/app-icon.ico"
     },
     "linux": {
       "target": [

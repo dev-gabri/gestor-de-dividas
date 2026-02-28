@@ -3,7 +3,7 @@ const { autoUpdater } = require("electron-updater");
 const fs = require("fs");
 const path = require("path");
 
-const iconPath = path.join(__dirname, "..", "logo.png");
+const iconPath = path.join(__dirname, "..", "renderer", "public", "branding", "app-icon.png");
 const rendererDistIndex = path.join(__dirname, "..", "renderer", "dist", "index.html");
 const preloadPath = path.join(__dirname, "preload.cjs");
 const devServerUrl = process.env.ELECTRON_RENDERER_URL || "http://localhost:5173";

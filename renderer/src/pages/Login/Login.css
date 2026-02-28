@@ -11,7 +11,7 @@
 .login__overlay {
   position: absolute;
   inset: 0;
-  background: url("../../assets/market-people-original.jpg") center / cover no-repeat;
+  background: url("/images/backgrounds/market-people.jpg") center / cover no-repeat;
   opacity: 1;
 }
 

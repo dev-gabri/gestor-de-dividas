@@ -20,3 +20,17 @@ VITE_SUPABASE_ANON_KEY=
 ```
 
 Para documentação geral do projeto, veja `../README.md`.
+
+## Assets
+Os assets do app ficam separados por responsabilidade:
+
+- `renderer/public/branding/`
+- `renderer/public/images/backgrounds/`
+- `renderer/public/images/company/`
+- `../resources/icons/`
+
+Convenção:
+
+- `renderer/public/branding/`: logo e ícone usados em tempo de execução pelo frontend.
+- `renderer/public/images/`: imagens estáticas da interface.
+- `resources/icons/`: ícones de empacotamento para Electron Builder.

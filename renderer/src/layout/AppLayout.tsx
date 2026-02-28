@@ -29,7 +29,7 @@ export default function AppLayout() {
   const nav = useNavigate();
   const location = useLocation();
   const session = getSession();
-  const appVersion = "1.0.9";
+  const appVersion = "1.0.10";
   const isAdmin = session?.role === "admin";
   const isClienteRoute = location.pathname.startsWith("/app/cliente/");
   const [atualizadoLabel, setAtualizadoLabel] = useState<string | null>(() =>
@@ -110,7 +110,7 @@ export default function AppLayout() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <img className="brand__photo" src="/images/fagundes.jpeg" alt="Fagundes" />
+          <img className="brand__photo" src="/images/company/fagundes-supermercado.png" alt="Fagundes Supermercado" />
           <div className="brand__text">
             <div className="brand__title">Olá, {session?.usuario ?? "Operador"}</div>
           </div>
