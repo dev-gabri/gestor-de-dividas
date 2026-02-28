@@ -171,6 +171,7 @@ export default function Cliente() {
   const [pendingLancamentoKind, setPendingLancamentoKind] = useState<LancamentoKind | null>(null);
   const [valorLancamento, setValorLancamento] = useState("");
   const [obsLancamento, setObsLancamento] = useState("");
+  const [senhaLancamento, setSenhaLancamento] = useState("");
   const [confirmandoLancamento, setConfirmandoLancamento] = useState(false);
   const [erroLancamento, setErroLancamento] = useState<string | null>(null);
   const [pendingSettle, setPendingSettle] = useState<PendingSettle | null>(null);
@@ -195,6 +196,7 @@ export default function Cliente() {
   const [erroExportacaoPdf, setErroExportacaoPdf] = useState<string | null>(null);
   const senhaLixeiraInputRef = useRef<HTMLInputElement | null>(null);
   const valorLancamentoInputRef = useRef<HTMLInputElement | null>(null);
+  const senhaLancamentoInputRef = useRef<HTMLInputElement | null>(null);
   const senhaQuitarTudoInputRef = useRef<HTMLInputElement | null>(null);
 
   const extratoViewRows = useMemo<ExtratoViewRow[]>(
@@ -287,6 +289,7 @@ export default function Cliente() {
       setPendingLancamentoKind(kind);
       setValorLancamento("");
       setObsLancamento("");
+      setSenhaLancamento("");
       setErroLancamento(null);
       window.setTimeout(() => valorLancamentoInputRef.current?.focus(), 0);
     },
@@ -340,6 +343,7 @@ export default function Cliente() {
     setPendingLancamentoKind(null);
     setValorLancamento("");
     setObsLancamento("");
+    setSenhaLancamento("");
     setErroLancamento(null);
   }, [confirmandoLancamento]);
 
@@ -380,10 +384,23 @@ export default function Cliente() {
       window.setTimeout(() => valorLancamentoInputRef.current?.focus(), 0);
       return;
     }
+    if (!senhaLancamento.trim()) {
+      setErroLancamento("Digite a senha do operador.");
+      window.setTimeout(() => senhaLancamentoInputRef.current?.focus(), 0);
+      return;
+    }
 
     setConfirmandoLancamento(true);
     setErroLancamento(null);
     try {
+      const senhaValida = await withTimeout(validarSenhaOperador(session.usuario, senhaLancamento.trim(), session.id));
+      if (!senhaValida) {
+        setErroLancamento("Senha do operador inválida.");
+        setSenhaLancamento("");
+        window.setTimeout(() => senhaLancamentoInputRef.current?.focus(), 0);
+        return;
+      }
+
       const obs = obsLancamento.trim();
       if (pendingLancamentoKind === "SALE") {
         await lancarVenda(clienteId, valorCentavos, obs, session.id);
@@ -394,6 +411,7 @@ export default function Cliente() {
       setPendingLancamentoKind(null);
       setValorLancamento("");
       setObsLancamento("");
+      setSenhaLancamento("");
       setErroLancamento(null);
       await load();
     } catch (e: unknown) {
@@ -401,7 +419,7 @@ export default function Cliente() {
     } finally {
       setConfirmandoLancamento(false);
     }
-  }, [session, pendingLancamentoKind, confirmandoLancamento, valorLancamento, obsLancamento, clienteId, load]);
+  }, [session, pendingLancamentoKind, confirmandoLancamento, valorLancamento, senhaLancamento, obsLancamento, clienteId, load]);
 
   const confirmarQuitarTudo = useCallback(async () => {
     if (!session || !pendingSettle || confirmandoQuitarTudo) return;
@@ -997,6 +1015,27 @@ export default function Cliente() {
                 value={obsLancamento}
                 onChange={(e) => setObsLancamento(e.target.value)}
                 placeholder="Descrição da operação"
+                disabled={confirmandoLancamento}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void confirmarLancamento();
+                }}
+              />
+            </label>
+
+            <label className="field">
+              <span>Senha do operador</span>
+              <input
+                ref={senhaLancamentoInputRef}
+                className="input"
+                type="password"
+                value={senhaLancamento}
+                onChange={(e) => {
+                  setSenhaLancamento(e.target.value);
+                  if (erroLancamento) setErroLancamento(null);
+                }}
+                placeholder="Digite sua senha"
                 disabled={confirmandoLancamento}
                 onKeyDown={(e) => {
                   if (e.key !== "Enter") return;
